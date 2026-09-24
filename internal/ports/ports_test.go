@@ -108,14 +108,14 @@ func TestDistinctBranchesGetDistinctPorts(t *testing.T) {
 	InUse = func(port int) bool { return used[port] }
 	defer func() { InUse = restore }()
 
-	a, err := Allocate(p, "feature-oku-7234")
+	a, err := Allocate(p, "feature-login-fix")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, port := range a.Ports {
 		used[port] = true
 	}
-	b, err := Allocate(p, "feature-oku-7235")
+	b, err := Allocate(p, "feature-signup-fix")
 	if err != nil {
 		t.Fatal(err)
 	}
