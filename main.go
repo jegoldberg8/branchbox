@@ -80,9 +80,9 @@ func root(ctx context.Context, args []string) error {
 		// socket into a directory containers can see. Not in the usage text
 		// because it is never invoked by hand.
 		if len(rest) != 2 {
-			return fmt.Errorf("usage: branchbox bridge <source-socket> <listen-socket>")
+			return fmt.Errorf("usage: branchbox bridge <server-socket> <port-file>")
 		}
-		return jcode.RunBridge(rest[1], rest[0])
+		return jcode.RunBridge(rest[0], rest[1])
 	default:
 		return fmt.Errorf("unknown command %q; run `branchbox help`", cmd)
 	}

@@ -100,7 +100,7 @@ func Build(p *profile.Profile, o Options) (*Config, error) {
 		// relays it into the jcode home instead, and that directory is already
 		// mounted above, so the container sees the relay without a second
 		// mount.
-		cfg.ContainerEnv["JCODE_SOCKET"] = jcode.ContainerBridgeSocket()
+		cfg.ContainerEnv["JCODE_SOCKET"] = jcode.ContainerSocket
 		cfg.ContainerEnv["JCODE_HOST_SERVER"] = o.JcodeServer.Name
 	}
 	cfg.Mounts = append(cfg.Mounts, o.ExtraMounts...)

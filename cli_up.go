@@ -108,6 +108,7 @@ func cmdUp(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	var bridge jcode.Bridge
 	if srv != nil {
 		// Relay the server's socket into the jcode home, which is mounted into
 		// the container. The socket itself cannot be mounted: on macOS it
@@ -116,7 +117,8 @@ func cmdUp(ctx context.Context, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to locate the branchbox binary: %w", err)
 		}
-		if _, err := jcode.EnsureBridge(srv, jcodeHome, self); err != nil {
+		bridge, err = jcode.EnsureBridge(srv, jcodeHome, self)
+		if err != nil {
 			return err
 		}
 	}
@@ -149,6 +151,14 @@ func cmdUp(ctx context.Context, args []string) error {
 		"--id-label", "branchbox.slug=" + wt.Slug,
 	}, run.Options{Stream: true}); err != nil {
 		return err
+	}
+
+	if bridge.Port > 0 {
+		// Re-expose the host relay as a unix socket inside the container,
+		// which is what jcode connects to.
+		if _, err := docker.ExecLogin(ctx, container, jcode.ContainerRelayCommand(bridge)); err != nil {
+			fmt.Fprintf(os.Stderr, "branchbox: jcode mesh unavailable: %v\n", err)
+		}
 	}
 
 	// A stable path to the checkout, since the real one is the host's and so

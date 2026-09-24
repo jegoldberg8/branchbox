@@ -52,7 +52,7 @@ services:
       retries: 20
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8-alpine
+    image: clickhouse/clickhouse-server:25.8-alpine
     environment:
       CLICKHOUSE_USER: retail
       CLICKHOUSE_PASSWORD: retail

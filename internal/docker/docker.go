@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/jegoldberg8/branchbox/internal/run"
 )
 
@@ -160,9 +162,17 @@ func ExecLogin(ctx context.Context, name, script string) (string, error) {
 // stdin is a pipe, which is exactly how scripts and CI would call this.
 func Attach(name string, args ...string) error {
 	flags := "-i"
-	if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+	if isTerminal(os.Stdin) {
 		flags = "-it"
 	}
 	full := append([]string{"exec", flags, name}, args...)
 	return run.Interactive("docker", full...)
+}
+
+// isTerminal reports whether f is a real terminal. A character-device check
+// alone is not enough: some runners hand over /dev/null, which is a character
+// device but makes `docker exec -it` fail outright.
+func isTerminal(f *os.File) bool {
+	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TIOCGETA)
+	return err == nil
 }

@@ -173,11 +173,15 @@ func TestBuildReachesTheJcodeServerThroughTheBridge(t *testing.T) {
 		}
 	}
 	// It is reached through the relay inside the already-mounted jcode home.
-	if cfg.ContainerEnv["JCODE_SOCKET"] != jcode.ContainerBridgeSocket() {
-		t.Errorf("JCODE_SOCKET = %q, want the bridge path", cfg.ContainerEnv["JCODE_SOCKET"])
+	if cfg.ContainerEnv["JCODE_SOCKET"] != jcode.ContainerSocket {
+		t.Errorf("JCODE_SOCKET = %q, want the in-container relay socket", cfg.ContainerEnv["JCODE_SOCKET"])
 	}
-	if !strings.HasPrefix(jcode.ContainerBridgeSocket(), "/home/dev/.jcode/") {
-		t.Errorf("the bridge must live inside the mounted jcode home: %q", jcode.ContainerBridgeSocket())
+	// The relay socket must be on the container's own filesystem: a unix
+	// socket on a macOS bind mount is unusable from the container side.
+	for _, m := range cfg.Mounts {
+		if strings.Contains(m, "target="+jcode.ContainerSocket) {
+			t.Errorf("the relay socket must not come from a bind mount: %q", m)
+		}
 	}
 }
 
