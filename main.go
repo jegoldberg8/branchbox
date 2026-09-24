@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/jegoldberg8/branchbox/internal/jcode"
 )
 
 func main() {
@@ -73,6 +75,14 @@ func root(ctx context.Context, args []string) error {
 		return cmdImage(ctx, rest)
 	case "profiles":
 		return cmdProfiles(ctx, rest)
+	case "bridge":
+		// Internal: branchbox re-execs itself in this mode to relay the jcode
+		// socket into a directory containers can see. Not in the usage text
+		// because it is never invoked by hand.
+		if len(rest) != 2 {
+			return fmt.Errorf("usage: branchbox bridge <source-socket> <listen-socket>")
+		}
+		return jcode.RunBridge(rest[1], rest[0])
 	default:
 		return fmt.Errorf("unknown command %q; run `branchbox help`", cmd)
 	}

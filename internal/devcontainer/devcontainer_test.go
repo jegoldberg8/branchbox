@@ -56,14 +56,19 @@ func TestBuildMountsMainRepoReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(cfg.WorkspaceMount, "source=/host/trees/feature-x") {
-		t.Errorf("workspace mount = %q, want the worktree", cfg.WorkspaceMount)
+	// The worktree must appear at its host path: its .git pointer holds an
+	// absolute host path into the main repo's .git/worktrees.
+	if !strings.Contains(cfg.WorkspaceMount, "source=/host/trees/feature-x,target=/host/trees/feature-x") {
+		t.Errorf("workspace mount = %q, want the worktree at its host path", cfg.WorkspaceMount)
+	}
+	if cfg.WorkspaceFolder != "/host/trees/feature-x" {
+		t.Errorf("workspaceFolder = %q", cfg.WorkspaceFolder)
 	}
 	// Without the main checkout the worktree's .git pointer cannot resolve, so
 	// git inside the container would be broken.
 	found := false
 	for _, m := range cfg.Mounts {
-		if strings.Contains(m, "source=/host/repo") && strings.Contains(m, "target="+MainRepoDir) {
+		if strings.Contains(m, "source=/host/repo") && strings.Contains(m, "target=/host/repo") {
 			found = true
 			if !strings.Contains(m, "readonly") {
 				t.Errorf("main repo mount is not read-only: %q", m)
@@ -83,7 +88,7 @@ func TestBuildSkipsMainRepoMountWhenWorktreeIsTheRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, m := range cfg.Mounts {
-		if strings.Contains(m, "target="+MainRepoDir) {
+		if strings.Contains(m, "target=/host/repo") {
 			t.Errorf("redundant main repo mount: %q", m)
 		}
 	}
@@ -145,7 +150,7 @@ func TestBuildJoinsTheProfileNetworkOnlyWithInfra(t *testing.T) {
 	}
 }
 
-func TestBuildMountsJcodeSocketsAtAFixedPath(t *testing.T) {
+func TestBuildReachesTheJcodeServerThroughTheBridge(t *testing.T) {
 	o := opts(t)
 	o.JcodeHome = "/host/.jcode"
 	o.JcodeServer = &jcode.Server{
@@ -160,16 +165,19 @@ func TestBuildMountsJcodeSocketsAtAFixedPath(t *testing.T) {
 	if !hasMount(cfg, "target=/home/dev/.jcode") {
 		t.Errorf("jcode home is not shared: %v", cfg.Mounts)
 	}
-	// The host path is a private temp dir; the container path must be stable
-	// so the in-container jcode can be pointed at it.
-	if !hasMount(cfg, "target="+jcode.ContainerSocketDir+"/jcode.sock") {
-		t.Errorf("jcode socket is not mounted at the fixed path: %v", cfg.Mounts)
+	// The server's own socket lives under /var/folders on macOS, which Docker
+	// Desktop will not share, so it must not be mounted directly.
+	for _, m := range cfg.Mounts {
+		if strings.Contains(m, "/private/tmp/xyz") {
+			t.Errorf("the host socket must not be bind-mounted directly: %q", m)
+		}
 	}
-	if !hasMount(cfg, "target="+jcode.ContainerSocketDir+"/jcode-debug.sock") {
-		t.Errorf("jcode debug socket is not mounted: %v", cfg.Mounts)
+	// It is reached through the relay inside the already-mounted jcode home.
+	if cfg.ContainerEnv["JCODE_SOCKET"] != jcode.ContainerBridgeSocket() {
+		t.Errorf("JCODE_SOCKET = %q, want the bridge path", cfg.ContainerEnv["JCODE_SOCKET"])
 	}
-	if cfg.ContainerEnv["JCODE_SOCKET"] != jcode.ContainerSocketDir+"/jcode.sock" {
-		t.Errorf("JCODE_SOCKET = %q", cfg.ContainerEnv["JCODE_SOCKET"])
+	if !strings.HasPrefix(jcode.ContainerBridgeSocket(), "/home/dev/.jcode/") {
+		t.Errorf("the bridge must live inside the mounted jcode home: %q", jcode.ContainerBridgeSocket())
 	}
 }
 
@@ -190,7 +198,7 @@ func TestWriteProducesParsableDevcontainerJSON(t *testing.T) {
 	if err := json.Unmarshal(body, &back); err != nil {
 		t.Fatalf("generated devcontainer.json does not parse: %v", err)
 	}
-	if back["workspaceFolder"] != WorkspaceDir {
+	if back["workspaceFolder"] != "/host/trees/feature-x" {
 		t.Errorf("workspaceFolder = %v", back["workspaceFolder"])
 	}
 }

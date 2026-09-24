@@ -9,11 +9,6 @@ import (
 	"path/filepath"
 )
 
-// ContainerSocketDir is where the host sockets are mounted inside a container.
-// jcode inside the container is pointed at this directory, so the path does
-// not have to match the host's (macOS puts them under a private $TMPDIR).
-const ContainerSocketDir = "/run/jcode-host"
-
 // Server describes one entry of ~/.jcode/servers.json.
 type Server struct {
 	Name        string `json:"name"`

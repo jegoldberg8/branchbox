@@ -19,7 +19,7 @@ import (
 const Session = "branchbox"
 
 // EnsureSession creates the session if it is not already running.
-func EnsureSession(ctx context.Context, container string) error {
+func EnsureSession(ctx context.Context, container, workdir string) error {
 	if _, err := docker.Exec(ctx, container, []string{"tmux", "has-session", "-t", Session}); err == nil {
 		return nil
 	}
@@ -27,7 +27,7 @@ func EnsureSession(ctx context.Context, container string) error {
 	// is killed, so restarting one service does not tear down the session.
 	_, err := docker.Exec(ctx, container, []string{
 		"tmux", "new-session", "-d", "-s", Session, "-n", "shell",
-		"-c", devcontainer.WorkspaceDir, "bash", "-l",
+		"-c", workdir, "bash", "-l",
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start the tmux session: %w", err)
@@ -38,8 +38,8 @@ func EnsureSession(ctx context.Context, container string) error {
 // StartService runs one service in its own window, replacing any previous
 // window of the same name so restarting is idempotent. Output is tee'd to the
 // mounted log directory, so it is readable from the host without attaching.
-func StartService(ctx context.Context, container, name, command string) error {
-	if err := EnsureSession(ctx, container); err != nil {
+func StartService(ctx context.Context, container, workdir, name, command string) error {
+	if err := EnsureSession(ctx, container, workdir); err != nil {
 		return err
 	}
 	_, _ = docker.Exec(ctx, container, []string{"tmux", "kill-window", "-t", Session + ":" + name})
@@ -47,10 +47,10 @@ func StartService(ctx context.Context, container, name, command string) error {
 	log := devcontainer.LogsDir + "/" + name + ".log"
 	// A login shell so mise shims and direnv apply; `exec` inside the pipeline
 	// would lose the tee, so the command is piped instead.
-	script := fmt.Sprintf("cd %s && %s 2>&1 | tee -a %s", devcontainer.WorkspaceDir, command, log)
+	script := fmt.Sprintf("cd %s && %s 2>&1 | tee -a %s", workdir, command, log)
 	if _, err := docker.Exec(ctx, container, []string{
 		"tmux", "new-window", "-d", "-t", Session, "-n", name,
-		"-c", devcontainer.WorkspaceDir, "bash", "-lc", script,
+		"-c", workdir, "bash", "-lc", script,
 	}); err != nil {
 		return fmt.Errorf("failed to start service %s: %w", name, err)
 	}

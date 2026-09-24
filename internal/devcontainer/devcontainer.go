@@ -18,14 +18,10 @@ import (
 	"github.com/jegoldberg8/branchbox/internal/worktree"
 )
 
-// WorkspaceDir is where the branch checkout appears inside the container.
-const WorkspaceDir = "/workspace"
-
-// MainRepoDir is where the project's main checkout is mounted, read-only. It
-// is not a convenience: a git worktree's .git is a pointer file into the main
-// repository's .git/worktrees directory, so git inside the container cannot
-// resolve HEAD without it.
-const MainRepoDir = "/workspace-main"
+// WorkspaceLink is a stable, project-independent path to the branch checkout.
+// The checkout itself is mounted at its host path (see Build), so this symlink
+// exists to give scripts and muscle memory one predictable location.
+const WorkspaceLink = "/workspace"
 
 // LogsDir is the container side of the host log directory.
 const LogsDir = "/var/log/branchbox"
@@ -62,10 +58,15 @@ func Build(p *profile.Profile, o Options) (*Config, error) {
 		return nil, fmt.Errorf("a worktree is required")
 	}
 	cfg := &Config{
-		Name:            o.ContainerName,
-		Image:           o.Image,
-		WorkspaceFolder: WorkspaceDir,
-		WorkspaceMount:  bind(o.Worktree.Path, WorkspaceDir, ""),
+		Name:  o.ContainerName,
+		Image: o.Image,
+		// Both checkouts are mounted at their *host* paths. A git worktree's
+		// .git is a pointer file containing an absolute path into the main
+		// repository's .git/worktrees directory, and that path is recorded on
+		// the host. Mounting the checkouts anywhere else leaves git unable to
+		// resolve HEAD inside the container.
+		WorkspaceFolder: o.Worktree.Path,
+		WorkspaceMount:  bind(o.Worktree.Path, o.Worktree.Path, ""),
 		ContainerEnv:    map[string]string{},
 		RemoteUser:      "dev",
 		// The image has no long-running entrypoint of its own; branchbox keeps
@@ -81,9 +82,11 @@ func Build(p *profile.Profile, o Options) (*Config, error) {
 	// still talk to services running on the host.
 	cfg.RunArgs = append(cfg.RunArgs, "--add-host", "host.docker.internal:host-gateway")
 
-	// The main checkout, read-only: see MainRepoDir.
+	// The main checkout, at its host path and read-only: the worktree's .git
+	// pointer resolves into this directory, so git needs it present, but
+	// nothing in the container should write to another branch's checkout.
 	if o.Worktree.Path != o.Worktree.MainRepo {
-		cfg.Mounts = append(cfg.Mounts, bind(o.Worktree.MainRepo, MainRepoDir, "ro"))
+		cfg.Mounts = append(cfg.Mounts, bind(o.Worktree.MainRepo, o.Worktree.MainRepo, "ro"))
 	}
 	if o.HostLogDir != "" {
 		cfg.Mounts = append(cfg.Mounts, bind(o.HostLogDir, LogsDir, ""))
@@ -92,16 +95,12 @@ func Build(p *profile.Profile, o Options) (*Config, error) {
 		cfg.Mounts = append(cfg.Mounts, bind(o.JcodeHome, "/home/dev/.jcode", ""))
 	}
 	if o.JcodeServer != nil {
-		// Mount the sockets individually at a fixed path: the host directory
-		// is a private per-user temp directory on macOS, and mounting the
-		// whole thing would drag unrelated state along.
-		cfg.Mounts = append(cfg.Mounts,
-			bind(o.JcodeServer.Socket, filepath.Join(jcode.ContainerSocketDir, "jcode.sock"), ""))
-		if o.JcodeServer.DebugSocket != "" {
-			cfg.Mounts = append(cfg.Mounts,
-				bind(o.JcodeServer.DebugSocket, filepath.Join(jcode.ContainerSocketDir, "jcode-debug.sock"), ""))
-		}
-		cfg.ContainerEnv["JCODE_SOCKET"] = filepath.Join(jcode.ContainerSocketDir, "jcode.sock")
+		// The server's own socket is not mounted directly: on macOS it lives
+		// under /var/folders, which Docker Desktop will not share. branchbox
+		// relays it into the jcode home instead, and that directory is already
+		// mounted above, so the container sees the relay without a second
+		// mount.
+		cfg.ContainerEnv["JCODE_SOCKET"] = jcode.ContainerBridgeSocket()
 		cfg.ContainerEnv["JCODE_HOST_SERVER"] = o.JcodeServer.Name
 	}
 	cfg.Mounts = append(cfg.Mounts, o.ExtraMounts...)
@@ -117,6 +116,9 @@ func Build(p *profile.Profile, o Options) (*Config, error) {
 	}
 	sort.Strings(cfg.AppPort)
 
+	// mise refuses to read a config file from an untrusted path, and the
+	// checkout's path is the host's, so it cannot be baked into the image.
+	cfg.ContainerEnv["MISE_TRUSTED_CONFIG_PATHS"] = o.Worktree.Path
 	cfg.ContainerEnv["BRANCHBOX_PROJECT"] = p.Name
 	cfg.ContainerEnv["BRANCHBOX_BRANCH"] = o.Worktree.Branch
 	cfg.ContainerEnv["BRANCHBOX_SLUG"] = o.Worktree.Slug

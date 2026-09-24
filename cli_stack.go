@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jegoldberg8/branchbox/internal/devcontainer"
 	"github.com/jegoldberg8/branchbox/internal/docker"
 	"github.com/jegoldberg8/branchbox/internal/infra"
 	"github.com/jegoldberg8/branchbox/internal/run"
@@ -45,7 +46,7 @@ func cmdShell(ctx context.Context, args []string) error {
 	if len(rest) > 1 {
 		window = rest[1]
 	}
-	if err := tmux.EnsureSession(ctx, st.ContainerName); err != nil {
+	if err := tmux.EnsureSession(ctx, st.ContainerName, st.Worktree); err != nil {
 		return err
 	}
 	return tmux.Attach(st.ContainerName, window)
@@ -193,7 +194,20 @@ func cmdDown(ctx context.Context, args []string) error {
 	for _, ref := range refs {
 		st, err := e.store.Resolve(p.Name, ref)
 		if err != nil {
-			return err
+			// A stack whose `up` failed partway leaves a container with no
+			// state record. Fall back to the name that would have been used,
+			// so a half-created stack is still removable.
+			slug := worktree.Slug(ref)
+			name := devcontainer.ContainerName(p.Name, slug)
+			status, serr := docker.State(ctx, name)
+			if serr != nil || status == "" {
+				return err
+			}
+			if rerr := docker.Remove(ctx, name); rerr != nil {
+				return rerr
+			}
+			fmt.Printf("branchbox: removed %s (no state record)\n", name)
+			continue
 		}
 		if err := docker.Remove(ctx, st.ContainerName); err != nil {
 			return err

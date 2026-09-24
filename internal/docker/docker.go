@@ -114,9 +114,38 @@ func Remove(ctx context.Context, name string) error {
 	return nil
 }
 
+// StaleImage reports whether an existing container was created from an image
+// other than the current one. The devcontainer CLI reuses a container by
+// labels alone, so without this check a rebuilt base image would never reach
+// the stacks that were already running.
+func StaleImage(ctx context.Context, container, image string) (bool, error) {
+	status, err := State(ctx, container)
+	if err != nil || status == "" {
+		return false, err
+	}
+	got, err := run.Cmd(ctx, "docker", []string{"inspect", "-f", "{{.Image}}", container}, run.Options{})
+	if err != nil {
+		return false, err
+	}
+	want, err := run.Cmd(ctx, "docker", []string{"image", "inspect", "-f", "{{.Id}}", image}, run.Options{})
+	if err != nil {
+		// No current image means nothing to compare against; the caller
+		// builds it before reaching here in the normal path.
+		return false, nil
+	}
+	return strings.TrimSpace(got) != strings.TrimSpace(want), nil
+}
+
 // Exec runs a command inside a container and returns its output.
 func Exec(ctx context.Context, name string, args []string) (string, error) {
 	full := append([]string{"exec", name}, args...)
+	return run.Cmd(ctx, "docker", full, run.Options{})
+}
+
+// ExecAsRoot runs a command inside a container as root, for the few setup
+// steps that touch paths the developer user does not own.
+func ExecAsRoot(ctx context.Context, name string, args []string) (string, error) {
+	full := append([]string{"exec", "-u", "0", name}, args...)
 	return run.Cmd(ctx, "docker", full, run.Options{})
 }
 
@@ -127,8 +156,13 @@ func ExecLogin(ctx context.Context, name, script string) (string, error) {
 }
 
 // Attach runs an interactive command inside a container, wired to the user's
-// terminal.
+// terminal. The TTY flag is conditional: `docker exec -it` fails outright when
+// stdin is a pipe, which is exactly how scripts and CI would call this.
 func Attach(name string, args ...string) error {
-	full := append([]string{"exec", "-it", name}, args...)
+	flags := "-i"
+	if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+		flags = "-it"
+	}
+	full := append([]string{"exec", flags, name}, args...)
 	return run.Interactive("docker", full...)
 }

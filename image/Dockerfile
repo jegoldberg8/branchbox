@@ -48,7 +48,7 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 RUN groupadd -g ${USER_GID} devgrp 2>/dev/null || true \
     && useradd --non-unique --no-user-group -m -u ${USER_UID} -g ${USER_GID} -s /bin/bash dev \
-    && install -d -o ${USER_UID} -g ${USER_GID} /workspace /var/log/branchbox
+    && install -d -o ${USER_UID} -g ${USER_GID} /var/log/branchbox
 
 # mise: per-project toolchains, installed at container start from the target
 # repository's mise.toml.
@@ -90,7 +90,7 @@ RUN set -eux; \
 RUN printf '%s\n' \
       'eval "$(mise activate bash)"' \
       'eval "$(direnv hook bash)"' \
-      'export PATH="$HOME/.local/share/mise/shims:$PATH"' \
+      'export PATH="$MISE_DATA_DIR/shims:$PATH"' \
       > /etc/profile.d/branchbox.sh \
     && printf '%s\n' '[ -f /etc/profile.d/branchbox.sh ] && . /etc/profile.d/branchbox.sh' \
       >> /home/dev/.bashrc \
@@ -98,10 +98,18 @@ RUN printf '%s\n' \
     # Created here so the named volumes branchbox mounts over them inherit the
     # developer's ownership instead of being root-owned and unwritable.
     && install -d -o ${USER_UID} -g ${USER_GID} \
-         /home/dev/.cache /home/dev/.local/share/mise
+         /home/dev/.cache /home/dev/.config /opt/branchbox/mise
 
 USER dev
-WORKDIR /workspace
-ENV MISE_TRUSTED_CONFIG_PATHS=/workspace \
+# mise state lives outside $HOME: branchbox mounts per-branch cache volumes
+# into the home directory, and a volume mounted at ~/.cache hides any sibling
+# directory the image created under ~/.local, leaving mise unable to write its
+# trust and tracking state.
+WORKDIR /
+# MISE_TRUSTED_CONFIG_PATHS is set per container by branchbox, since the
+# checkout is mounted at its host path and so differs per project.
+ENV MISE_DATA_DIR=/opt/branchbox/mise/data \
+    MISE_STATE_DIR=/opt/branchbox/mise/state \
+    MISE_CACHE_DIR=/opt/branchbox/mise/cache \
     SHELL=/bin/bash
 CMD ["sleep", "infinity"]

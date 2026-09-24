@@ -75,6 +75,16 @@ func cmdUp(ctx context.Context, args []string) error {
 	}
 
 	container := devcontainer.ContainerName(p.Name, wt.Slug)
+	// A container built from an older base image would silently keep running
+	// the old toolchain after `branchbox image build`, so replace it.
+	if stale, err := docker.StaleImage(ctx, container, docker.BaseImage); err != nil {
+		return err
+	} else if stale {
+		fmt.Println("branchbox: base image changed; recreating the container")
+		if err := docker.Remove(ctx, container); err != nil {
+			return err
+		}
+	}
 	alloc, err := allocatePorts(ctx, e, p, wt.Slug, container)
 	if err != nil {
 		return err
@@ -97,6 +107,18 @@ func cmdUp(ctx context.Context, args []string) error {
 	jcodeHome, err := jcode.Home()
 	if err != nil {
 		return err
+	}
+	if srv != nil {
+		// Relay the server's socket into the jcode home, which is mounted into
+		// the container. The socket itself cannot be mounted: on macOS it
+		// lives under /var/folders, which Docker Desktop refuses to share.
+		self, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("failed to locate the branchbox binary: %w", err)
+		}
+		if _, err := jcode.EnsureBridge(srv, jcodeHome, self); err != nil {
+			return err
+		}
 	}
 
 	cfg, err := devcontainer.Build(p, devcontainer.Options{
@@ -129,6 +151,15 @@ func cmdUp(ctx context.Context, args []string) error {
 		return err
 	}
 
+	// A stable path to the checkout, since the real one is the host's and so
+	// differs per project. Created as root because it lives at the filesystem
+	// root; a failure here costs only the convenience path.
+	if _, err := docker.ExecAsRoot(ctx, container, []string{
+		"ln", "-sfn", wt.Path, devcontainer.WorkspaceLink,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "branchbox: could not create %s: %v\n", devcontainer.WorkspaceLink, err)
+	}
+
 	if len(p.Setup.Steps) > 0 {
 		fmt.Println("branchbox: running setup steps")
 		for _, step := range p.Setup.Steps {
@@ -145,7 +176,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		StartedAt: time.Now(),
 	}
 	for _, name := range services {
-		if err := tmux.StartService(ctx, container, name, p.Services[name]); err != nil {
+		if err := tmux.StartService(ctx, container, wt.Path, name, p.Services[name]); err != nil {
 			return err
 		}
 		st.Services = append(st.Services, name)
@@ -174,14 +205,18 @@ func allocatePorts(ctx context.Context, e *env, p *profile.Profile, slug, contai
 	return ports.Allocate(p, slug)
 }
 
-// cacheMounts gives each branch its own build cache volume. Sharing one cache
-// between branches would serialize their builds and thrash on differing
-// dependency sets.
+// cacheMounts gives each branch its own build cache and toolchain volume.
+// Sharing one cache between branches would serialize their builds and thrash
+// on differing dependency sets.
+//
+// The toolchain volume deliberately sits outside $HOME: a volume mounted at
+// ~/.cache hides sibling directories the image created under the home
+// directory, which left mise unable to write its state.
 func cacheMounts(p *profile.Profile, slug string) []string {
 	vol := "branchbox-cache-" + p.Name + "-" + slug
 	return []string{
 		"source=" + vol + ",target=/home/dev/.cache,type=volume",
-		"source=" + vol + "-tools,target=/home/dev/.local/share/mise,type=volume",
+		"source=" + vol + "-tools,target=/opt/branchbox/mise,type=volume",
 	}
 }
 
@@ -233,7 +268,7 @@ func cmdRun(ctx context.Context, args []string) error {
 			return fmt.Errorf("profile %s has no service %q (known: %s)",
 				p.Name, name, strings.Join(p.ServiceNames(), ", "))
 		}
-		if err := tmux.StartService(ctx, st.ContainerName, name, command); err != nil {
+		if err := tmux.StartService(ctx, st.ContainerName, st.Worktree, name, command); err != nil {
 			return err
 		}
 		if !contains(st.Services, name) {
