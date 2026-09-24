@@ -1,0 +1,119 @@
+# Shared backing services for the oku-account profile.
+#
+# Started once with `branchbox infra up oku-account` and reused by every branch
+# container of this profile, which joins the same network and reaches these
+# services by name. Running one set of databases for all branches is a
+# deliberate choice: migrations are shared, which is what you want when you are
+# comparing two branches of the same application.
+#
+# This replaces the repo's mise-managed local stack for branchbox use. The repo
+# is not modified and its own `mise run infra` remains usable independently, on
+# the same host ports.
+
+name: branchbox-oku-account
+
+networks:
+  default:
+    name: branchbox-oku-account
+    external: true
+
+volumes:
+  postgres:
+  clickhouse:
+  nats:
+  redis:
+
+services:
+  postgres:
+    # Pinned to 16 to match what the repo pins for local dev, which in turn
+    # matches production. A different major will not start on an existing data
+    # directory.
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports: ["15432:5432"]
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      # Runs once on an empty data directory: creates the retail database and
+      # the functions the deployed image ships, which the migrations assume
+      # already exist.
+      - ./oku/postgres-init.sql:/docker-entrypoint-initdb.d/10-branchbox.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment:
+      CLICKHOUSE_USER: retail
+      CLICKHOUSE_PASSWORD: retail
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports: ["18123:8123", "19000:9000"]
+    volumes:
+      - clickhouse:/var/lib/clickhouse
+      - ./oku/clickhouse-init.sql:/docker-entrypoint-initdb.d/10-branchbox.sql:ro
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports: ["4222:4222", "8222:8222"]
+    volumes:
+      - nats:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8222/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # One Temporal for every branch: workers from different branches poll the
+  # same task queues and race for work, which is the intended behaviour here.
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PWD: postgres
+      POSTGRES_SEEDS: postgres
+      # Matches the namespaces the repo's config and mise env expect.
+      DEFAULT_NAMESPACE: oku_local_ns
+      DEFAULT_NAMESPACE_RETENTION: 24h
+    ports: ["7233:7233"]
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator cluster health --address 127.0.0.1:7233 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    depends_on: [temporal]
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:8233
+    ports: ["8233:8080"]

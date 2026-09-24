@@ -1,0 +1,14 @@
+# A minimal profile: one repository, one command, no backing services.
+#
+# This is the floor of what branchbox needs. Everything else in the schema is
+# optional, and a project that is just "check out this branch and run this" needs
+# nothing more than the three lines below.
+#
+# Copy this to ~/.local/state/branchbox/profiles/<yours>.toml and edit it. User
+# profiles shadow the ones shipped here, so you never have to edit this repo.
+
+name = "example"
+repo = "~/code/example"
+
+[services]
+dev = "make dev"

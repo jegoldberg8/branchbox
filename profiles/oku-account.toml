@@ -1,0 +1,87 @@
+# Oku accounts.
+#
+# The services come from kocmd, a single binary dispatching on argv[1]. Every
+# setting they need is overridable through the environment, so this profile
+# wires the containers to the shared infra without editing a single file in the
+# target repository.
+
+name = "oku-account"
+repo = "~/GFXLabs/Oku/account"
+worktrees = "~/GFXLabs/Oku/account-worktrees"
+
+# Gitignored local files that live only in the main checkout. They are
+# symlinked into each worktree, so there is one place to rotate a credential.
+secrets = [
+  "config.yaml",
+  ".env",
+  "google-application-credentials.json",
+  "zitadel-application-credentials.json",
+  "zitadel-service-credentials.json",
+]
+
+[infra]
+compose = "../infra/oku.compose.yaml"
+
+[env]
+# Service names on the profile's shared network. One set of databases and one
+# Temporal for every branch: workers from different branches poll the same task
+# queues and race for work, which is what makes a side-by-side comparison
+# meaningful.
+PG_URL = "postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable"
+RETAIL_PG_URL = "postgres://postgres:postgres@postgres:5432/retail?sslmode=disable"
+REDIS_URL = "redis://redis:6379"
+TEMPORAL_HOSTPORT = "temporal:7233"
+TEMPORAL_ADDRESS = "temporal:7233"
+TEMPORAL_NAMESPACE = "oku_local_ns"
+TEMPORAL_RETAIL_NAMESPACE = "oku_retail_ns"
+
+# Candles are ClickHouse-only: the API server and the workers refuse to start
+# without this database.
+OKU_CLICKHOUSE_ADDR = "clickhouse:9000"
+OKU_CLICKHOUSE_DATABASE = "account_candles"
+OKU_CLICKHOUSE_USER = "retail"
+OKU_CLICKHOUSE_PASSWORD = "retail"
+OKU_CLICKHOUSE_SCHEMA_USER = "retail"
+OKU_CLICKHOUSE_SCHEMA_PASSWORD = "retail"
+
+OKUBASE_CLICKHOUSE_ADDR = "clickhouse:9000"
+OKUBASE_CLICKHOUSE_USER = "retail"
+OKUBASE_CLICKHOUSE_PASSWORD = "retail"
+OKUBASE_CLICKHOUSE_DATABASE = "okubase"
+OKUBASE_NATS_ADDR = "nats://nats:4222"
+OKUBASE_COLLECT_ID = "local"
+
+NATS_URL = "nats://nats:4222"
+DEV_CORS_FLAG = "1"
+FF_JIT_ALL_ROUTERS = "1"
+# Public test fixtures, used only by the local stack.
+RETAIL_SERVICE_TOKEN = "local-retail-service"
+RETAIL_SIGNING_PUBLIC_KEY = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+RETAIL_SIGNING_PRIVATE_KEY = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
+
+[ports]
+# Each branch stack takes one slot: PORT 3100, 3110, 3120... and the matching
+# metrics port, published on the host under the same number.
+PORT = { base = 3100, stride = 10 }
+METRICS_PORT = { base = 6100, stride = 10 }
+
+[services]
+apiserver = "go run ./kocmd apiserver"
+bgworker = "go run ./kocmd bgworker"
+rwaworker = "go run ./kocmd rwaworker"
+retailapiserver = "go run ./kocmd retailapiserver"
+retailworker = "go run ./kocmd retailworker"
+hlproducer = "go run ./kocmd hlproducer"
+okubase = "go run ./kocmd okubase"
+processor = "go run ./kocmd processor"
+
+# Schema commands, run on demand with `branchbox run <branch> <name>`. They
+# follow the branch's own code, which is why they are not baked into the infra
+# compose file.
+migrate-okubase = "go run ./kocmd obcli migrate"
+migrate-candles = "go run ./kocmd candlemigrate"
+
+[setup]
+# Installs the toolchain the repo pins in its own mise.toml, so the container
+# matches CI rather than a version chosen here.
+steps = ["mise trust --quiet || true", "mise install"]
