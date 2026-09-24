@@ -113,3 +113,13 @@ since the two must speak the same protocol.
   convenience.
 - Each branch gets its own build-cache volumes, so branches do not serialize on
   one cache or thrash on differing dependency sets.
+
+## Install
+
+```bash
+go build -o branchbox . && ln -sfn "$PWD/branchbox" ~/.local/bin/branchbox
+```
+
+The binary finds its assets (image, profiles) by walking up from its own
+resolved path, so a symlink into `~/.local/bin` works. `BRANCHBOX_HOME`
+overrides the lookup and `BRANCHBOX_STATE` relocates the state directory.
