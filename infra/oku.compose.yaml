@@ -7,8 +7,13 @@
 # comparing two branches of the same application.
 #
 # This replaces the repo's mise-managed local stack for branchbox use. The repo
-# is not modified and its own `mise run infra` remains usable independently, on
-# the same host ports.
+# is not modified and its own `mise run infra` remains usable independently.
+#
+# Host ports are deliberately offset by 10000 from the repo's own local stack
+# (25432 rather than 15432, and so on): the two are expected to coexist on one
+# machine, and colliding on a port would make starting one silently break the
+# other. Branch containers do not use these at all, they reach each service by
+# name on the shared network; the published ports are only for host tooling.
 
 name: branchbox-oku-account
 
@@ -33,7 +38,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
-    ports: ["15432:5432"]
+    ports: ["25432:5432"]
     volumes:
       - postgres:/var/lib/postgresql/data
       # Runs once on an empty data directory: creates the retail database and
@@ -52,7 +57,7 @@ services:
       CLICKHOUSE_USER: retail
       CLICKHOUSE_PASSWORD: retail
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
-    ports: ["18123:8123", "19000:9000"]
+    ports: ["28123:8123", "29000:9000"]
     volumes:
       - clickhouse:/var/lib/clickhouse
       - ./oku/clickhouse-init.sql:/docker-entrypoint-initdb.d/10-branchbox.sql:ro
@@ -67,7 +72,7 @@ services:
   nats:
     image: nats:2.10-alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
-    ports: ["4222:4222", "8222:8222"]
+    ports: ["24222:4222", "28222:8222"]
     volumes:
       - nats:/data
     healthcheck:
@@ -78,7 +83,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    ports: ["26379:6379"]
     volumes:
       - redis:/data
     healthcheck:
@@ -103,9 +108,11 @@ services:
       # Matches the namespaces the repo's config and mise env expect.
       DEFAULT_NAMESPACE: oku_local_ns
       DEFAULT_NAMESPACE_RETENTION: 24h
-    ports: ["7233:7233"]
+    ports: ["27233:7233"]
     healthcheck:
-      test: ["CMD-SHELL", "temporal operator cluster health --address 127.0.0.1:7233 || exit 1"]
+      # The frontend binds the container's own address, not loopback, so a
+      # 127.0.0.1 probe reports a healthy server as unhealthy.
+      test: ["CMD-SHELL", "temporal operator cluster health --address $$(hostname -i):7233 | grep -q SERVING"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -115,5 +122,5 @@ services:
     depends_on: [temporal]
     environment:
       TEMPORAL_ADDRESS: temporal:7233
-      TEMPORAL_CORS_ORIGINS: http://localhost:8233
-    ports: ["8233:8080"]
+      TEMPORAL_CORS_ORIGINS: http://localhost:28233
+    ports: ["28233:8080"]
