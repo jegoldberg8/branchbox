@@ -1,0 +1,61 @@
+# Example shared backing services for a profile.
+#
+# A profile that sets `[infra] compose = "..."` gets these started once by
+# `branchbox infra up <profile>`, and every branch container of that profile
+# joins the same network and reaches each service by name (`postgres:5432`,
+# `redis:6379`), not through a published host port.
+#
+# One set of databases serves every branch on purpose: that is what makes a
+# side-by-side comparison of two branches meaningful. If you need isolation
+# per branch, give each branch its own database inside these servers rather
+# than a second copy of the servers.
+#
+# Two rules worth keeping:
+#
+#   1. The network is named `branchbox-<profile>` and declared external.
+#      branchbox creates it, so branch containers can join whether or not this
+#      compose project is running.
+#   2. Published host ports should not collide with whatever local stack the
+#      project already ships. Offsetting by 10000 is a simple way to let the
+#      two coexist; nothing in the containers depends on these numbers.
+
+name: branchbox-example
+
+networks:
+  default:
+    name: branchbox-example
+    external: true
+
+volumes:
+  postgres:
+  redis:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports: ["25432:5432"]
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      # Optional: SQL run once on an empty data directory, for extensions or
+      # functions your migrations assume already exist.
+      # - ./example/postgres-init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["26379:6379"]
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20

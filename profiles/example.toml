@@ -1,14 +1,49 @@
-# A minimal profile: one repository, one command, no backing services.
+# Template profile. Copy this to ~/.local/state/branchbox/profiles/<yours>.toml
+# and edit it; profiles there shadow the ones shipped here, so you never have to
+# modify this repository to describe your own projects.
 #
-# This is the floor of what branchbox needs. Everything else in the schema is
-# optional, and a project that is just "check out this branch and run this" needs
-# nothing more than the three lines below.
+# The minimum is three lines: a name, a repo, and one service.
 #
-# Copy this to ~/.local/state/branchbox/profiles/<yours>.toml and edit it. User
-# profiles shadow the ones shipped here, so you never have to edit this repo.
+#   name = "example"
+#   repo = "~/code/example"
+#
+#   [services]
+#   dev = "make dev"
+#
+# Everything below is optional.
 
 name = "example"
 repo = "~/code/example"
 
+# Where per-branch worktrees are created. Defaults to <repo>-worktrees.
+# worktrees = "~/code/example-worktrees"
+
+# Gitignored local files that exist only in the main checkout. They are
+# symlinked into each worktree, so there is one place to rotate a credential
+# and the worktree stays clean.
+# secrets = [".env", "config.local.yaml", "*-credentials.json"]
+
+# Shared backing services, started once per profile by `branchbox infra up`.
+# The path is resolved relative to this file. Omit the whole section for a
+# project that needs no databases.
+# [infra]
+# compose = "../infra/example.compose.yaml"
+
+# Environment for every container of this profile. With [infra], address the
+# services by their compose service name, not through a published host port.
+# [env]
+# DATABASE_URL = "postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable"
+# REDIS_URL = "redis://redis:6379"
+
+# Each branch stack takes one slot: PORT becomes 3100, 3110, 3120, ... and is
+# published on the host under the same number.
+# [ports]
+# PORT = { base = 3100, stride = 10 }
+
+# Commands run in their own tmux window inside the container.
 [services]
 dev = "make dev"
+
+# Commands run once when a container starts, before any service.
+# [setup]
+# steps = ["mise install"]

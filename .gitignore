@@ -1,3 +1,12 @@
 /branchbox
 /dist/
 *.test
+
+# Project-specific profiles and their infra stay local. The tool itself is
+# generic; a profile names a developer's own paths, internal service names and
+# local fixture credentials, none of which belong in a shared repository.
+# profiles/example.toml is the documented template and is tracked.
+/profiles/*
+!/profiles/example.toml
+/infra/*
+!/infra/example.compose.yaml

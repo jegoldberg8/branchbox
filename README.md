@@ -5,9 +5,9 @@ and a jcode that joins your host's mesh. Two branches of the same service can
 run side by side against one shared set of databases.
 
 ```bash
-branchbox infra up oku-account              # shared databases, once
-branchbox up feature/oku-7234 rwaworker     # branch A
-branchbox up feature/oku-7235 rwaworker     # branch B
+branchbox infra up myproject          # shared databases, once
+branchbox up feature/a worker         # branch A
+branchbox up feature/b worker         # branch B
 branchbox ps
 ```
 
@@ -77,8 +77,14 @@ The full schema:
 | `[setup] steps` | commands run once when a container starts |
 
 Profiles are searched in `~/.local/state/branchbox/profiles` first, then in this
-repository's `profiles/`. A user profile shadows a shipped one of the same name,
-so you never have to edit this repo to adjust a profile.
+repository's `profiles/`. A user profile shadows a shipped one of the same name.
+
+**Your own profiles belong in `~/.local/state/branchbox/profiles/`**, not in this
+repository: a profile names your local paths, your project's internal service
+names and its local fixture credentials. `profiles/example.toml` and
+`infra/example.compose.yaml` here are templates; copy them out and edit the
+copies. The repository ignores everything else under `profiles/` and `infra/`,
+so a profile kept alongside them will not be committed by accident.
 
 Ports are allocated as a *set*: `slot = hash(project, branch) % 16`, probed
 forward until every port of the set is free. The same branch therefore keeps
