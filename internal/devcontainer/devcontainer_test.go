@@ -232,3 +232,51 @@ func TestBuildAppliesACPUQuota(t *testing.T) {
 		t.Errorf("a zero quota must not be passed to docker: %v", cfg.RunArgs)
 	}
 }
+
+// TestBuildRejectsARelativeMountSource guards a failure that reached a real
+// run: an unset state directory produced `source=servers.json`, which docker
+// reads as a volume name rather than a path, and the container refused to
+// start with an opaque error.
+func TestBuildRejectsARelativeMountSource(t *testing.T) {
+	o := opts(t)
+	o.ExtraMounts = []string{"source=servers.json,target=/home/dev/.jcode/servers.json,type=bind"}
+	if _, err := Build(testProfile(t, ""), o); err == nil {
+		t.Fatal("expected an error for a relative bind source")
+	}
+
+	// Volumes are named, not paths, so they must still be accepted.
+	o.ExtraMounts = []string{"source=branchbox-cache,target=/home/dev/.cache,type=volume"}
+	if _, err := Build(testProfile(t, ""), o); err != nil {
+		t.Errorf("a named volume must be allowed: %v", err)
+	}
+}
+
+// TestBuildIsolatesPerMachineJcodeState covers the registry-wipe bug: a
+// container has its own PID namespace, so sharing servers.json let it decide
+// the host server was dead and prune it, breaking agent discovery everywhere.
+func TestBuildIsolatesPerMachineJcodeState(t *testing.T) {
+	o := opts(t)
+	o.JcodeHome = "/host/.jcode"
+	o.JcodeStateDir = "/host/state/stack/jcode"
+	cfg, err := Build(testProfile(t, ""), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range jcode.PerMachinePaths {
+		target := "target=/home/dev/.jcode/" + name
+		found := false
+		for _, m := range cfg.Mounts {
+			if strings.Contains(m, target) && strings.Contains(m, "source=/host/state/stack/jcode/"+name) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s is not shadowed by the stack's own copy: %v", name, cfg.Mounts)
+		}
+	}
+	// The rest of the jcode home must still be shared, or the container loses
+	// credentials, sessions and memory.
+	if !hasMount(cfg, "source=/host/.jcode,target=/home/dev/.jcode") {
+		t.Error("the jcode home is no longer shared")
+	}
+}

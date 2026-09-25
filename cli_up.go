@@ -135,12 +135,21 @@ func cmdUp(ctx context.Context, args []string) error {
 		}
 	}
 
+	cfgDir := e.stackDir(p.Name, wt.Slug)
+	// A private copy of jcode's process bookkeeping, so the container cannot
+	// prune the host's server from the shared registry.
+	jcodeState := filepath.Join(cfgDir, "jcode")
+	if err := jcode.EnsureStateDir(jcodeState, jcodeHome); err != nil {
+		return err
+	}
+
 	cfg, err := devcontainer.Build(p, devcontainer.Options{
 		Image:            docker.BaseImage,
 		Worktree:         wt,
 		Alloc:            alloc,
 		HostLogDir:       logDir,
 		JcodeHome:        jcodeHome,
+		JcodeStateDir:    jcodeState,
 		JcodeServer:      srv,
 		ContainerName:    container,
 		ExtraMounts:      cacheMounts(p, wt.Slug),
@@ -150,7 +159,6 @@ func cmdUp(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	cfgDir := e.stackDir(p.Name, wt.Slug)
 	cfgPath, err := devcontainer.Write(cfg, cfgDir)
 	if err != nil {
 		return err

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/jegoldberg8/branchbox/internal/jcode"
 	"github.com/jegoldberg8/branchbox/internal/ports"
@@ -42,11 +43,14 @@ type Config struct {
 
 // Options are the host-side facts needed to render a config.
 type Options struct {
-	Image         string
-	Worktree      *worktree.Worktree
-	Alloc         ports.Allocation
-	HostLogDir    string
-	JcodeHome     string
+	Image      string
+	Worktree   *worktree.Worktree
+	Alloc      ports.Allocation
+	HostLogDir string
+	JcodeHome  string
+	// JcodeStateDir holds this stack's private copies of the jcode paths that
+	// record process state; see jcode.PerMachinePaths.
+	JcodeStateDir string
 	JcodeServer   *jcode.Server
 	ExtraMounts   []string
 	ContainerName string
@@ -105,6 +109,17 @@ func Build(p *profile.Profile, o Options) (*Config, error) {
 	}
 	if o.JcodeHome != "" {
 		cfg.Mounts = append(cfg.Mounts, bind(o.JcodeHome, "/home/dev/.jcode", ""))
+		// Shadow the host's process bookkeeping with the stack's own. Sharing
+		// it lets a container, whose PID namespace does not contain the host
+		// server, decide that server is dead and prune it from the registry,
+		// which breaks agent discovery everywhere. Credentials, sessions and
+		// memory stay shared because only these specific paths are covered.
+		if o.JcodeStateDir != "" {
+			for _, name := range jcode.PerMachinePaths {
+				host := filepath.Join(o.JcodeStateDir, name)
+				cfg.Mounts = append(cfg.Mounts, bind(host, "/home/dev/.jcode/"+name, ""))
+			}
+		}
 	}
 	if o.JcodeServer != nil {
 		// The server's own socket is not mounted directly: on macOS it lives
@@ -147,7 +162,33 @@ func Build(p *profile.Profile, o Options) (*Config, error) {
 			cfg.ContainerEnv["MAKEFLAGS"] = "-j" + strconv.Itoa(n)
 		}
 	}
+
+	if err := validateMounts(cfg); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// validateMounts rejects a relative bind source. Docker reads a relative
+// source as a *volume name*, so an unset path silently becomes a new empty
+// volume instead of the host directory that was intended.
+func validateMounts(cfg *Config) error {
+	all := append([]string{cfg.WorkspaceMount}, cfg.Mounts...)
+	for _, m := range all {
+		for _, field := range strings.Split(m, ",") {
+			src, ok := strings.CutPrefix(field, "source=")
+			if !ok {
+				continue
+			}
+			if strings.Contains(m, "type=volume") {
+				continue
+			}
+			if !filepath.IsAbs(src) {
+				return fmt.Errorf("bind mount source %q is not an absolute path: %s", src, m)
+			}
+		}
+	}
+	return nil
 }
 
 // Write renders the config to disk and returns its path.
