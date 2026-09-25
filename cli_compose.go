@@ -92,12 +92,13 @@ func cmdCompose(ctx context.Context, args []string) error {
 	return procompose.Attached(ctx, st.ContainerName, cfg)
 }
 
-// composeProcesses returns the processes a stack runs under process-compose,
-// or nil when it is not using it. `ps` reports these instead of the tmux
-// window, which is just the supervisor and says nothing about the services.
-func composeProcesses(ctx context.Context, container string) []string {
+// composeStatuses returns the processes a stack runs under process-compose and
+// how each is doing, or nil when it is not using it. `ps` reports these instead
+// of the tmux window, which is just the supervisor and says nothing about
+// whether the services behind it are alive.
+func composeStatuses(ctx context.Context, container string) []procompose.Status {
 	if status, err := docker.State(ctx, container); err != nil || status != "running" {
 		return nil
 	}
-	return procompose.Processes(ctx, container)
+	return procompose.Statuses(ctx, container)
 }

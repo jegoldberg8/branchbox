@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -168,6 +169,43 @@ func Processes(ctx context.Context, container string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// Status is one process and how it is actually doing.
+type Status struct {
+	Name     string
+	State    string
+	Restarts int
+	ExitCode int
+}
+
+// Healthy reports whether the process is up and has not been crash-looping.
+// Restarts matter: a service that dies and is restarted every few seconds is
+// "Running" at almost every instant you look at it.
+func (s Status) Healthy() bool { return s.State == "Running" && s.Restarts == 0 }
+
+// Statuses returns each process with its state, so a caller can report a dead
+// or crash-looping service instead of calling the stack "running".
+func Statuses(ctx context.Context, container string) []Status {
+	out, err := docker.ExecLogin(ctx, container,
+		fmt.Sprintf("process-compose -p %d process list -o wide 2>/dev/null", Port))
+	if err != nil {
+		return nil
+	}
+	var all []Status
+	for i, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		// PID NAME NAMESPACE STATUS AGE HEALTH RESTARTS EXITCODE
+		if i == 0 || len(fields) < 8 {
+			continue
+		}
+		st := Status{Name: fields[1], State: fields[3]}
+		st.Restarts, _ = strconv.Atoi(fields[len(fields)-2])
+		st.ExitCode, _ = strconv.Atoi(fields[len(fields)-1])
+		all = append(all, st)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	return all
 }
 
 // Stop shuts the project down, leaving the container itself running.

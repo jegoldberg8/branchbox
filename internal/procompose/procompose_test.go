@@ -139,3 +139,24 @@ func TestHostConfigPathIsInTheLogMount(t *testing.T) {
 		t.Errorf("ConfigPath = %q, want it inside the log mount", ConfigPath)
 	}
 }
+
+// TestStatusHealthyRequiresNoRestarts encodes why `ps` reported a stack as
+// "running" while bgworker was crash-looping: a service that dies and is
+// restarted every few seconds reads as "Running" at almost any instant.
+func TestStatusHealthyRequiresNoRestarts(t *testing.T) {
+	cases := []struct {
+		name string
+		st   Status
+		want bool
+	}{
+		{"running cleanly", Status{State: "Running"}, true},
+		{"crash looping", Status{State: "Running", Restarts: 4}, false},
+		{"exited", Status{State: "Completed", ExitCode: 1}, false},
+		{"never started", Status{State: "Pending"}, false},
+	}
+	for _, c := range cases {
+		if got := c.st.Healthy(); got != c.want {
+			t.Errorf("%s: Healthy() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

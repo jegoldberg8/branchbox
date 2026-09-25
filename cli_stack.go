@@ -117,6 +117,20 @@ func cmdPS(ctx context.Context, args []string) error {
 				services = w
 			}
 		}
+		// A tmux window disappears when its command exits, so a service the
+		// stack was started with but that is no longer present has died.
+		var dead []string
+		if status == "running" {
+			live := map[string]bool{}
+			for _, s := range services {
+				live[s] = true
+			}
+			for _, want := range st.Services {
+				if !live[want] {
+					dead = append(dead, want)
+				}
+			}
+		}
 		if len(services) == 0 {
 			services = []string{"-"}
 		}
@@ -124,8 +138,21 @@ func cmdPS(ctx context.Context, args []string) error {
 		// supervisor, which says nothing about the services; ask the
 		// supervisor instead.
 		runner := ""
-		if procs := composeProcesses(ctx, st.ContainerName); len(procs) > 0 {
-			services = procs
+		if procs := composeStatuses(ctx, st.ContainerName); len(procs) > 0 {
+			services, dead = nil, nil
+			for _, p := range procs {
+				if p.Healthy() {
+					services = append(services, p.Name)
+					continue
+				}
+				// Restart counts matter: a crash-looping service reads as
+				// "Running" at almost any instant you happen to look.
+				label := p.Name + " (" + strings.ToLower(p.State)
+				if p.Restarts > 0 {
+					label += fmt.Sprintf(", %d restarts", p.Restarts)
+				}
+				dead = append(dead, label+")")
+			}
 			runner = " (process-compose)"
 		}
 		var portList []string
@@ -134,6 +161,10 @@ func cmdPS(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("%-24s %-9s %s (%s)\n", st.Project+"/"+st.Slug, status, st.Branch, head)
 		fmt.Printf("    services: %s%s\n", strings.Join(services, ", "), runner)
+		if len(dead) > 0 {
+			fmt.Printf("    FAILED:   %s (see `branchbox logs %s <service>`)\n",
+				strings.Join(dead, ", "), st.Slug)
+		}
 		if len(portList) > 0 {
 			fmt.Printf("    ports:    %s\n", strings.Join(portList, " "))
 		}
