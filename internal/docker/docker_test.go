@@ -45,3 +45,31 @@ func TestBuildParallelismIsStable(t *testing.T) {
 		}
 	}
 }
+
+// TestCPUQuotaLeavesHeadroom is the regression guard for an unusable shell: a
+// stack building three services once took 1208% CPU, starving every other
+// container on the machine. GOMAXPROCS alone did not stop it, because each
+// service runs its own compiler and every child inherits the limit rather than
+// sharing it, so the quota has to be on the container.
+func TestCPUQuotaLeavesHeadroom(t *testing.T) {
+	quota := CPUQuota(context.Background())
+	if runtime.NumCPU() <= 2 {
+		if quota != 0 {
+			t.Errorf("CPUQuota = %v, want 0 on a machine too small to divide", quota)
+		}
+		return
+	}
+	if quota <= 0 {
+		t.Fatalf("CPUQuota = %v, want a limit on a %d CPU machine", quota, runtime.NumCPU())
+	}
+	if quota >= float64(runtime.NumCPU()) {
+		t.Errorf("CPUQuota = %v of %d CPUs, which leaves nothing for other stacks or the shell",
+			quota, runtime.NumCPU())
+	}
+	// Two stacks building at once must still fit, or the guarantee is only
+	// good for a single stack.
+	if quota*2 > float64(runtime.NumCPU()) {
+		t.Errorf("CPUQuota = %v, so two stacks (%v) oversubscribe %d CPUs",
+			quota, quota*2, runtime.NumCPU())
+	}
+}

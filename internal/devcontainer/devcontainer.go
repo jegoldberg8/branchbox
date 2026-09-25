@@ -53,6 +53,8 @@ type Options struct {
 	// BuildParallelism caps compiler parallelism inside the container. Zero
 	// leaves the toolchain's own default in place.
 	BuildParallelism int
+	// CPUs is the container's CPU quota. Zero leaves it unlimited.
+	CPUs float64
 }
 
 // Build renders the configuration for one stack.
@@ -78,6 +80,13 @@ func Build(p *profile.Profile, o Options) (*Config, error) {
 	}
 
 	cfg.RunArgs = []string{"--name", o.ContainerName, "--hostname", o.Worktree.Slug}
+	if o.CPUs > 0 {
+		// A hard quota, because limiting the toolchain is not enough: each
+		// service runs its own compiler, every child inherits GOMAXPROCS
+		// rather than sharing it, and the product starves the machine. One
+		// stack building must not make another stack's shell unusable.
+		cfg.RunArgs = append(cfg.RunArgs, "--cpus", strconv.FormatFloat(o.CPUs, 'f', 2, 64))
+	}
 	if p.Infra.Compose != "" {
 		cfg.RunArgs = append(cfg.RunArgs, "--network", p.Network())
 	}

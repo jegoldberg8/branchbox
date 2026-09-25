@@ -82,6 +82,26 @@ func BuildParallelism(ctx context.Context) int {
 	return n
 }
 
+// CPUQuota returns the share of the daemon's CPUs one stack may use.
+//
+// Without a quota, a single stack building three services saturates every
+// core: GOMAXPROCS bounds one process, but each service runs its own compiler
+// and each child inherits the same limit rather than sharing it. The result
+// starves every other container, including the shell you are typing into.
+func CPUQuota(ctx context.Context) float64 {
+	n := runtime.NumCPU()
+	if n <= 2 {
+		return 0 // Too small to carve up; leave it alone.
+	}
+	// Half the machine, so a second stack and the databases stay responsive
+	// while one stack builds.
+	quota := float64(n) / 2
+	if quota < 2 {
+		quota = 2
+	}
+	return quota
+}
+
 // daemonMemory is the memory the Docker daemon reports for itself, which on
 // Docker Desktop is the VM's share rather than the host's total.
 func daemonMemory(ctx context.Context) int64 {
@@ -147,6 +167,19 @@ func State(ctx context.Context, name string) (string, error) {
 // Start starts an existing, stopped container.
 func Start(ctx context.Context, name string) error {
 	_, err := run.Cmd(ctx, "docker", []string{"start", name}, run.Options{})
+	return err
+}
+
+// SetCPUQuota applies a CPU limit to a container that already exists, so a
+// stack created before the limit existed does not keep starving the machine
+// until it is recreated.
+func SetCPUQuota(ctx context.Context, name string, cpus float64) error {
+	if cpus <= 0 {
+		return nil
+	}
+	_, err := run.Cmd(ctx, "docker", []string{
+		"update", "--cpus", strconv.FormatFloat(cpus, 'f', 2, 64), name,
+	}, run.Options{})
 	return err
 }
 

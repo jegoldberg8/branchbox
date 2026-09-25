@@ -145,6 +145,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		ContainerName:    container,
 		ExtraMounts:      cacheMounts(p, wt.Slug),
 		BuildParallelism: docker.BuildParallelism(ctx),
+		CPUs:             docker.CPUQuota(ctx),
 	})
 	if err != nil {
 		return err
@@ -312,7 +313,10 @@ func ensureRunning(ctx context.Context, st *state.Stack) error {
 	}
 	switch status {
 	case "running":
-		return nil
+		// Applied here as well as at creation: a stack made before the limit
+		// existed would otherwise keep saturating the machine, and an
+		// unusable shell is exactly how that surfaces.
+		return docker.SetCPUQuota(ctx, st.ContainerName, docker.CPUQuota(ctx))
 	case "":
 		return fmt.Errorf("container %s no longer exists; run `branchbox up %s`", st.ContainerName, st.Branch)
 	default:

@@ -206,3 +206,29 @@ func TestWriteProducesParsableDevcontainerJSON(t *testing.T) {
 		t.Errorf("workspaceFolder = %v", back["workspaceFolder"])
 	}
 }
+
+// TestBuildAppliesACPUQuota guards the shell-starvation regression at the
+// config layer: the quota must reach docker as a run argument, since limiting
+// the toolchain inside the container proved insufficient.
+func TestBuildAppliesACPUQuota(t *testing.T) {
+	o := opts(t)
+	o.CPUs = 7
+	cfg, err := Build(testProfile(t, ""), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(cfg.RunArgs, " ")
+	if !strings.Contains(joined, "--cpus 7.00") {
+		t.Errorf("run args do not carry the CPU quota: %v", cfg.RunArgs)
+	}
+
+	// Zero means "unlimited", and passing --cpus 0 would be an error.
+	o.CPUs = 0
+	cfg, err = Build(testProfile(t, ""), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(cfg.RunArgs, " "), "--cpus") {
+		t.Errorf("a zero quota must not be passed to docker: %v", cfg.RunArgs)
+	}
+}
