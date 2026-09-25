@@ -56,7 +56,7 @@ branches meaningful.
 | `branchbox shell [branch] [window]` | attach to the stack's tmux session |
 | `branchbox compose [project] <branch> [service ...]` | attached process-compose TUI over the stack's services (`--detach`, `--stop`) |
 | `branchbox exec [project] <branch> <command ...>` | run one command inside a stack |
-| `branchbox ps [project]` | list stacks, their branches, commits, services and ports |
+| `branchbox ps [project]` | list stacks and the shared infra they depend on |
 | `branchbox logs [project] <branch> [service] [--follow]` | read a service's log from the host |
 | `branchbox down [project] <branch> \| --all` | remove containers; worktrees and logs are kept |
 | `branchbox infra <up\|down\|status> [project] [--purge]` | manage a profile's shared services |

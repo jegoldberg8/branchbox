@@ -10,6 +10,7 @@ import (
 	"github.com/jegoldberg8/branchbox/internal/devcontainer"
 	"github.com/jegoldberg8/branchbox/internal/docker"
 	"github.com/jegoldberg8/branchbox/internal/infra"
+	"github.com/jegoldberg8/branchbox/internal/profile"
 	"github.com/jegoldberg8/branchbox/internal/run"
 	"github.com/jegoldberg8/branchbox/internal/tmux"
 	"github.com/jegoldberg8/branchbox/internal/worktree"
@@ -89,6 +90,9 @@ func cmdPS(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Infra first: a stack is only as healthy as the services behind it, and
+	// "why is my service dead" is usually answered here rather than above.
+	printInfra(ctx, e, project)
 	if len(stacks) == 0 {
 		fmt.Println("no stacks; start one with `branchbox up <branch> <service>`")
 		return nil
@@ -136,6 +140,29 @@ func cmdPS(ctx context.Context, args []string) error {
 		fmt.Printf("    worktree: %s\n", st.Worktree)
 	}
 	return nil
+}
+
+// printInfra summarises the shared services a project's stacks depend on.
+func printInfra(ctx context.Context, e *env, project string) {
+	profiles, err := profile.Discover(e.dirs)
+	if err != nil {
+		return
+	}
+	for _, p := range profiles {
+		if p.ComposePath() == "" || (project != "" && p.Name != project) {
+			continue
+		}
+		missing, err := infra.Missing(ctx, p)
+		if err != nil {
+			continue
+		}
+		if len(missing) == 0 {
+			fmt.Printf("%-24s %s\n", p.Name+" infra", "up")
+			continue
+		}
+		fmt.Printf("%-24s %s\n", p.Name+" infra", "DOWN: "+strings.Join(missing, ", "))
+		fmt.Printf("    start with `branchbox infra up %s`\n", p.Name)
+	}
 }
 
 func cmdLogs(ctx context.Context, args []string) error {
