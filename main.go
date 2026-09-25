@@ -31,6 +31,7 @@ Usage:
   branchbox up [project] <branch> [service ...]   start a stack and its services
   branchbox run <branch> <service ...>            start more services in a running stack
   branchbox shell [branch] [window]               attach to the stack's tmux session
+  branchbox compose <branch> [service ...]        attached process-compose TUI over a stack
   branchbox exec <branch> <command ...>           run one command inside a stack
   branchbox ps [project]                          list stacks
   branchbox logs <branch> [service]               show a service's log
@@ -46,6 +47,8 @@ Flags:
   --purge     with infra down: delete the data volumes too
   --follow    with logs: stream new output
   --rebuild   with up: rebuild the base image first
+  --detach    with compose: start the project without attaching
+  --stop      with compose: stop the project, leaving the container up
 `
 
 func root(ctx context.Context, args []string) error {
@@ -61,6 +64,8 @@ func root(ctx context.Context, args []string) error {
 		return cmdRun(ctx, rest)
 	case "shell":
 		return cmdShell(ctx, rest)
+	case "compose":
+		return cmdCompose(ctx, rest)
 	case "exec":
 		return cmdExec(ctx, rest)
 	case "ps":

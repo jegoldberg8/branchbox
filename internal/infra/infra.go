@@ -60,14 +60,37 @@ func Status(ctx context.Context, p *profile.Profile) (string, error) {
 	}, run.Options{})
 }
 
-// Running reports whether any of the profile's infra containers are up, so
-// `up` can warn instead of starting services that will fail to connect.
-func Running(ctx context.Context, p *profile.Profile) bool {
+// Missing returns the profile's infra services that are not currently running.
+//
+// Checking that *some* container is up is not enough: services stop
+// individually, and a stack missing only ClickHouse looks healthy while every
+// service that needs it fails to start.
+func Missing(ctx context.Context, p *profile.Profile) ([]string, error) {
 	if p.ComposePath() == "" {
-		return true
+		return nil, nil
 	}
-	out, err := run.Cmd(ctx, "docker", []string{
-		"compose", "-p", Project(p), "-f", p.ComposePath(), "ps", "-q",
+	defined, err := run.Cmd(ctx, "docker", []string{
+		"compose", "-p", Project(p), "-f", p.ComposePath(), "config", "--services",
 	}, run.Options{})
-	return err == nil && strings.TrimSpace(out) != ""
+	if err != nil {
+		return nil, err
+	}
+	up, err := run.Cmd(ctx, "docker", []string{
+		"compose", "-p", Project(p), "-f", p.ComposePath(), "ps",
+		"--status", "running", "--format", "{{.Service}}",
+	}, run.Options{})
+	if err != nil {
+		return nil, err
+	}
+	running := map[string]bool{}
+	for _, name := range strings.Fields(up) {
+		running[name] = true
+	}
+	var missing []string
+	for _, name := range strings.Fields(defined) {
+		if !running[name] {
+			missing = append(missing, name)
+		}
+	}
+	return missing, nil
 }

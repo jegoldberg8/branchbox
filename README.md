@@ -33,6 +33,14 @@ work in: attach, read the output, restart one service after an edit, leave the
 rest running. Output is also tee'd to a host directory, so `branchbox logs`
 works without attaching.
 
+For watching several services at once, `branchbox compose <branch>` runs the
+same commands under process-compose and attaches its TUI: status, restarts and
+per-process logs on one screen. It generates the config from the profile, so the
+commands are identical to the tmux runner's, and it takes over any tmux window
+for a service it manages rather than running it twice. `--detach` starts the
+project without attaching, and a later `branchbox compose <branch>` reattaches
+rather than restarting. `--stop` ends the project and leaves the container up.
+
 A profile may declare shared backing services as a Docker Compose file. Those
 start once per profile and every branch container of that profile joins the
 same network and reaches them by name. Databases and Temporal are shared across
@@ -46,6 +54,7 @@ branches meaningful.
 | `branchbox up [project] <branch> [service ...]` | provision the worktree, start the container, run services |
 | `branchbox run [project] <branch> <service ...>` | start more services in a running stack |
 | `branchbox shell [branch] [window]` | attach to the stack's tmux session |
+| `branchbox compose [project] <branch> [service ...]` | attached process-compose TUI over the stack's services (`--detach`, `--stop`) |
 | `branchbox exec [project] <branch> <command ...>` | run one command inside a stack |
 | `branchbox ps [project]` | list stacks, their branches, commits, services and ports |
 | `branchbox logs [project] <branch> [service] [--follow]` | read a service's log from the host |

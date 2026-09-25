@@ -47,7 +47,13 @@ func StartService(ctx context.Context, container, workdir, name, command string)
 	log := devcontainer.LogsDir + "/" + name + ".log"
 	// A login shell so mise shims and direnv apply; `exec` inside the pipeline
 	// would lose the tee, so the command is piped instead.
-	script := fmt.Sprintf("cd %s && %s 2>&1 | tee -a %s", workdir, command, log)
+	//
+	// Each run is delimited in the appended log. Without a marker, a failure
+	// from an earlier run is indistinguishable from the current one when
+	// reading the tail, which is exactly how a fixed OOM looks unfixed.
+	script := fmt.Sprintf(
+		"cd %s && printf '\\n=== branchbox: %s started %%s ===\\n' \"$(date -Is)\" >> %s && %s 2>&1 | tee -a %s",
+		workdir, name, log, command, log)
 	if _, err := docker.Exec(ctx, container, []string{
 		"tmux", "new-window", "-d", "-t", Session, "-n", name,
 		"-c", workdir, "bash", "-lc", script,
@@ -61,6 +67,22 @@ func StartService(ctx context.Context, container, workdir, name, command string)
 func StopService(ctx context.Context, container, name string) error {
 	_, err := docker.Exec(ctx, container, []string{"tmux", "kill-window", "-t", Session + ":" + name})
 	return err
+}
+
+// StartRaw runs an arbitrary command in a named window without the log tee,
+// for supervisors that write their own logs.
+func StartRaw(ctx context.Context, container, workdir, name, command string) error {
+	if err := EnsureSession(ctx, container, workdir); err != nil {
+		return err
+	}
+	_, _ = docker.Exec(ctx, container, []string{"tmux", "kill-window", "-t", Session + ":" + name})
+	if _, err := docker.Exec(ctx, container, []string{
+		"tmux", "new-window", "-d", "-t", Session, "-n", name,
+		"-c", workdir, "bash", "-lc", fmt.Sprintf("cd %s && %s", workdir, command),
+	}); err != nil {
+		return fmt.Errorf("failed to start %s: %w", name, err)
+	}
+	return nil
 }
 
 // Windows lists the service windows currently running in a container.

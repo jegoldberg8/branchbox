@@ -116,12 +116,20 @@ func cmdPS(ctx context.Context, args []string) error {
 		if len(services) == 0 {
 			services = []string{"-"}
 		}
+		// A stack under process-compose shows one tmux window for the
+		// supervisor, which says nothing about the services; ask the
+		// supervisor instead.
+		runner := ""
+		if procs := composeProcesses(ctx, st.ContainerName); len(procs) > 0 {
+			services = procs
+			runner = " (process-compose)"
+		}
 		var portList []string
 		for _, name := range sortedKeys(st.Ports) {
 			portList = append(portList, fmt.Sprintf("%s=%d", name, st.Ports[name]))
 		}
 		fmt.Printf("%-24s %-9s %s (%s)\n", st.Project+"/"+st.Slug, status, st.Branch, head)
-		fmt.Printf("    services: %s\n", strings.Join(services, ", "))
+		fmt.Printf("    services: %s%s\n", strings.Join(services, ", "), runner)
 		if len(portList) > 0 {
 			fmt.Printf("    ports:    %s\n", strings.Join(portList, " "))
 		}

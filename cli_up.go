@@ -73,9 +73,16 @@ func cmdUp(ctx context.Context, args []string) error {
 		if err := docker.EnsureNetwork(ctx, p.Network()); err != nil {
 			return err
 		}
-		if !infra.Running(ctx, p) {
+		missing, err := infra.Missing(ctx, p)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 {
+			// Naming the services matters: a stack missing only ClickHouse
+			// starts fine and then every service that needs it dies.
 			fmt.Fprintf(os.Stderr,
-				"branchbox: %s infra is not running; start it with `branchbox infra up %s`\n", p.Name, p.Name)
+				"branchbox: %s infra not running: %s; start it with `branchbox infra up %s`\n",
+				p.Name, strings.Join(missing, ", "), p.Name)
 		}
 	}
 
@@ -129,14 +136,15 @@ func cmdUp(ctx context.Context, args []string) error {
 	}
 
 	cfg, err := devcontainer.Build(p, devcontainer.Options{
-		Image:         docker.BaseImage,
-		Worktree:      wt,
-		Alloc:         alloc,
-		HostLogDir:    logDir,
-		JcodeHome:     jcodeHome,
-		JcodeServer:   srv,
-		ContainerName: container,
-		ExtraMounts:   cacheMounts(p, wt.Slug),
+		Image:            docker.BaseImage,
+		Worktree:         wt,
+		Alloc:            alloc,
+		HostLogDir:       logDir,
+		JcodeHome:        jcodeHome,
+		JcodeServer:      srv,
+		ContainerName:    container,
+		ExtraMounts:      cacheMounts(p, wt.Slug),
+		BuildParallelism: docker.BuildParallelism(ctx),
 	})
 	if err != nil {
 		return err

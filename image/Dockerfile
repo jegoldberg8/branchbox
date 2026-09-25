@@ -55,6 +55,24 @@ RUN groupadd -g ${USER_GID} devgrp 2>/dev/null || true \
 RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh \
     && chmod 0755 /usr/local/bin/mise
 
+# process-compose: an attached TUI over a stack's services, for when a set of
+# tmux windows is harder to read than one dashboard. Installed from the release
+# archive because Debian does not package it.
+# Pinned to match the host, so a config that works outside works inside.
+ARG PROCESS_COMPOSE_VERSION=1.122.0
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      arm64) asset=process-compose_linux_arm64.tar.gz ;; \
+      amd64) asset=process-compose_linux_amd64.tar.gz ;; \
+      *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/F1bonacc1/process-compose/releases/download/v${PROCESS_COMPOSE_VERSION}/${asset}" \
+      -o /tmp/pc.tar.gz; \
+    tar -xzf /tmp/pc.tar.gz -C /tmp process-compose; \
+    install -m 0755 /tmp/process-compose /usr/local/bin/process-compose; \
+    rm -f /tmp/pc.tar.gz /tmp/process-compose; \
+    process-compose version >/dev/null
+
 # direnv: projects that carry a .envrc get it honoured in the container shell.
 RUN apt-get update && apt-get install -y --no-install-recommends direnv \
     && rm -rf /var/lib/apt/lists/*

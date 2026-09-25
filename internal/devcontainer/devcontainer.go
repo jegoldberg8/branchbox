@@ -50,6 +50,9 @@ type Options struct {
 	JcodeServer   *jcode.Server
 	ExtraMounts   []string
 	ContainerName string
+	// BuildParallelism caps compiler parallelism inside the container. Zero
+	// leaves the toolchain's own default in place.
+	BuildParallelism int
 }
 
 // Build renders the configuration for one stack.
@@ -122,6 +125,19 @@ func Build(p *profile.Profile, o Options) (*Config, error) {
 	cfg.ContainerEnv["BRANCHBOX_PROJECT"] = p.Name
 	cfg.ContainerEnv["BRANCHBOX_BRANCH"] = o.Worktree.Branch
 	cfg.ContainerEnv["BRANCHBOX_SLUG"] = o.Worktree.Slug
+
+	// Compilers size their parallelism from the CPU count, which on Docker
+	// Desktop is the host's while the memory is the VM's much smaller share.
+	// Several services building at once then run enough compiler processes to
+	// be OOM-killed. Cap the default by the memory the daemon actually has.
+	if n := o.BuildParallelism; n > 0 {
+		if _, set := cfg.ContainerEnv["GOMAXPROCS"]; !set {
+			cfg.ContainerEnv["GOMAXPROCS"] = strconv.Itoa(n)
+		}
+		if _, set := cfg.ContainerEnv["MAKEFLAGS"]; !set {
+			cfg.ContainerEnv["MAKEFLAGS"] = "-j" + strconv.Itoa(n)
+		}
+	}
 	return cfg, nil
 }
 

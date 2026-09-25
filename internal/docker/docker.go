@@ -53,6 +53,49 @@ func daemonUp(ctx context.Context) bool {
 	return cmd.Run() == nil
 }
 
+// memPerBuildProcess is a conservative estimate of what one compiler process
+// needs. Go's linker and large packages are the peak, and overshooting here
+// costs some build speed while undershooting costs an OOM kill mid-build.
+const memPerBuildProcess = 1 << 30 // 1 GiB
+
+// BuildParallelism returns how many compiler processes the daemon's memory can
+// support, leaving headroom for the services already running.
+//
+// This exists because Docker Desktop reports the host's CPU count to
+// containers while giving them a fraction of the host's memory: a 36 GB Mac
+// with a 7.7 GB VM still says 14 CPUs, so a toolchain sizing itself by CPU
+// starts 14 compilers with half a gigabyte each and gets killed.
+func BuildParallelism(ctx context.Context) int {
+	total := daemonMemory(ctx)
+	if total <= 0 {
+		return 0
+	}
+	// Half the VM, so concurrent stacks and the databases they talk to are
+	// not competing with one build for the whole machine.
+	n := int(total / 2 / memPerBuildProcess)
+	if n < 1 {
+		return 1
+	}
+	if n > runtime.NumCPU() {
+		return runtime.NumCPU()
+	}
+	return n
+}
+
+// daemonMemory is the memory the Docker daemon reports for itself, which on
+// Docker Desktop is the VM's share rather than the host's total.
+func daemonMemory(ctx context.Context) int64 {
+	out, err := run.Cmd(ctx, "docker", []string{"info", "--format", "{{.MemTotal}}"}, run.Options{})
+	if err != nil {
+		return 0
+	}
+	total, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return total
+}
+
 // ImageExists reports whether the named image is present locally.
 func ImageExists(ctx context.Context, image string) bool {
 	_, err := run.Cmd(ctx, "docker", []string{"image", "inspect", image}, run.Options{})
