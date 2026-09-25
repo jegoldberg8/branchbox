@@ -59,6 +59,11 @@ func cmdUp(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if wt.Created {
+		// Say so explicitly: a mistyped branch name would otherwise silently
+		// become a new branch off the base.
+		fmt.Printf("branchbox: created branch %s from %s\n", branch, wt.Base)
+	}
 	head, err := worktree.Head(wt.Path)
 	if err != nil {
 		return err

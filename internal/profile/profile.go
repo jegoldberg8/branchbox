@@ -44,6 +44,9 @@ type Profile struct {
 	// Worktrees is where per-branch worktrees are created. Defaults to
 	// <repo>-worktrees.
 	Worktrees string `toml:"worktrees"`
+	// Base is the ref a brand-new branch starts from. Empty means the remote's
+	// default branch, which is what a developer branching by hand would use.
+	Base string `toml:"base"`
 	// Secrets are globs of gitignored local files in the main checkout that
 	// each worktree needs. They are symlinked, so there is one place to rotate
 	// them.

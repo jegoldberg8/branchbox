@@ -18,6 +18,10 @@ repo = "~/code/example"
 # Where per-branch worktrees are created. Defaults to <repo>-worktrees.
 # worktrees = "~/code/example-worktrees"
 
+# What a brand-new branch is started from, when the name exists neither locally
+# nor on the remote. Defaults to the remote's default branch.
+# base = "origin/develop"
+
 # Gitignored local files that exist only in the main checkout. They are
 # symlinked into each worktree, so there is one place to rotate a credential
 # and the worktree stays clean.

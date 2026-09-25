@@ -16,6 +16,12 @@ devcontainer configs, logs and state all live outside the target repository.
 
 ## How it works
 
+A branch is resolved in the order you would expect: an existing checkout, then a
+local branch, then `origin/<branch>` (fetching first, in case your remote-tracking
+refs are stale), and finally a new branch started from `base`. Creating a branch is
+reported explicitly, so a mistyped name is visible rather than silently becoming a
+new branch.
+
 Each stack is a git worktree of the target repository, bind-mounted into a
 container built from one shared base image. The base image carries git, tmux,
 gh, direnv, ripgrep, mise and jcode; the project's *toolchain* comes from the
@@ -69,6 +75,7 @@ The full schema:
 | --- | --- |
 | `repo` | the main checkout; branch containers run from worktrees of it |
 | `worktrees` | where worktrees are created (default `<repo>-worktrees`) |
+| `base` | ref a brand-new branch starts from (default: the remote's default branch) |
 | `secrets` | globs of gitignored local files symlinked from the main checkout into each worktree |
 | `[infra] compose` | Docker Compose file of shared backing services, resolved relative to the profile |
 | `[env]` | environment for every container of this profile |

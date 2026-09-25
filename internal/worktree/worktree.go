@@ -37,11 +37,17 @@ type Worktree struct {
 	// container: a worktree's .git is a pointer file into the main repo's
 	// .git/worktrees directory, so git inside the container breaks without it.
 	MainRepo string
+	// Created reports that the branch did not exist and was started from Base.
+	// The caller surfaces this, because silently inventing a branch when the
+	// user meant to type an existing one is worse than saying so.
+	Created bool
+	// Base is the ref the branch was created from, set only when Created.
+	Base string
 }
 
-// Ensure creates the worktree for branch, or reuses an existing checkout of
-// that branch. Local branches are used as-is; otherwise the branch is created
-// tracking origin/<branch>.
+// Ensure provisions a checkout for branch, resolving it in the order a
+// developer would expect: an existing checkout, then a local branch, then the
+// remote, and finally a new branch started from the profile's base.
 func Ensure(p *profile.Profile, branch string) (*Worktree, error) {
 	if _, err := os.Stat(filepath.Join(p.Repo, ".git")); err != nil {
 		return nil, fmt.Errorf("profile %s: %s is not a git checkout: %w", p.Name, p.Repo, err)
@@ -71,13 +77,9 @@ func Ensure(p *profile.Profile, branch string) (*Worktree, error) {
 	if err := os.MkdirAll(p.Worktrees, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create worktree directory %s: %w", p.Worktrees, err)
 	}
-	args := []string{"worktree", "add", wt.Path}
-	if hasLocalBranch(p.Repo, branch) {
-		args = append(args, branch)
-	} else {
-		// -B moves an existing local branch onto the remote tip; combined with
-		// the hasLocalBranch check above it only ever creates a new branch.
-		args = append(args, "-b", branch, "--track", "origin/"+branch)
+	args, err := addArgs(p, wt, branch)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := git(p.Repo, args...); err != nil {
 		return nil, err
@@ -86,6 +88,64 @@ func Ensure(p *profile.Profile, branch string) (*Worktree, error) {
 		return nil, err
 	}
 	return wt, nil
+}
+
+// addArgs builds the `git worktree add` invocation for a branch that is not
+// checked out anywhere yet, and records on wt whether the branch is new.
+func addArgs(p *profile.Profile, wt *Worktree, branch string) ([]string, error) {
+	args := []string{"worktree", "add", wt.Path}
+	if hasLocalBranch(p.Repo, branch) {
+		return append(args, branch), nil
+	}
+	// A branch pushed by someone else, or by you from another machine, is only
+	// visible after a fetch. Do that before concluding it does not exist, so a
+	// stale remote-tracking ref does not look like a typo.
+	if !hasRef(p.Repo, "refs/remotes/origin/"+branch) {
+		_, _ = git(p.Repo, "fetch", "--quiet", "origin", branch)
+	}
+	if hasRef(p.Repo, "refs/remotes/origin/"+branch) {
+		return append(args, "-b", branch, "--track", "origin/"+branch), nil
+	}
+
+	// The branch exists nowhere, so start it. Branching from the integration
+	// branch rather than from whatever the main checkout happens to have
+	// checked out keeps a new stack independent of unrelated local work.
+	base, err := baseRef(p)
+	if err != nil {
+		return nil, err
+	}
+	wt.Created = true
+	wt.Base = base
+	return append(args, "-b", branch, base), nil
+}
+
+// baseRef resolves what a new branch starts from: the profile's `base` when
+// set, otherwise the remote's default branch, otherwise the main checkout's
+// HEAD so that a repository without a remote still works.
+func baseRef(p *profile.Profile) (string, error) {
+	if p.Base != "" {
+		if !hasRef(p.Repo, "refs/heads/"+p.Base) && !hasRef(p.Repo, "refs/remotes/"+p.Base) {
+			return "", fmt.Errorf("profile %s: base %q does not exist in %s", p.Name, p.Base, p.Repo)
+		}
+		return p.Base, nil
+	}
+	if out, err := git(p.Repo, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"); err == nil {
+		if ref := strings.TrimSpace(out); ref != "" {
+			return strings.TrimPrefix(ref, "refs/remotes/"), nil
+		}
+	}
+	// origin/HEAD is unset on plenty of clones; fall back to the usual names.
+	for _, name := range []string{"origin/main", "origin/master"} {
+		if hasRef(p.Repo, "refs/remotes/"+name) {
+			return name, nil
+		}
+	}
+	return "HEAD", nil
+}
+
+func hasRef(repo, ref string) bool {
+	_, err := git(repo, "show-ref", "--verify", "--quiet", ref)
+	return err == nil
 }
 
 // linkSecrets symlinks the profile's gitignored local files from the main

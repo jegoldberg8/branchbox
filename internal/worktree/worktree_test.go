@@ -221,6 +221,100 @@ func TestHeadReportsTheCheckedOutCommit(t *testing.T) {
 	}
 }
 
+// TestEnsureCreatesAMissingBranch covers the case that previously failed with
+// "invalid reference: origin/<branch>": a name that exists neither locally nor
+// on the remote is a new branch, not an error.
+func TestEnsureCreatesAMissingBranch(t *testing.T) {
+	repo := newRepo(t)
+	p := testProfile(t, repo)
+
+	wt, err := Ensure(p, "feature/brand-new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wt.Created {
+		t.Error("Created is false, so the caller cannot tell the branch was invented")
+	}
+	if wt.Base == "" {
+		t.Error("Base is empty, so the report would not say what it branched from")
+	}
+	if branch := currentBranch(t, wt.Path); branch != "feature/brand-new" {
+		t.Errorf("branch = %q, want feature/brand-new", branch)
+	}
+	// The commit must come from the base, not be an empty checkout.
+	if _, err := os.Stat(filepath.Join(wt.Path, "file.txt")); err != nil {
+		t.Errorf("new branch does not carry the base's content: %v", err)
+	}
+}
+
+func TestEnsureDoesNotReportExistingBranchesAsCreated(t *testing.T) {
+	repo := newRepo(t)
+	p := testProfile(t, repo)
+	cmd := exec.Command("git", "branch", "feature/existing")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git branch: %v: %s", err, out)
+	}
+
+	wt, err := Ensure(p, "feature/existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wt.Created {
+		t.Error("an existing branch was reported as created")
+	}
+}
+
+func TestEnsureStartsANewBranchFromTheProfileBase(t *testing.T) {
+	repo := newRepo(t)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	// A base branch carrying a file that main does not have, so the new
+	// branch's content proves which ref it started from.
+	run("checkout", "-q", "-b", "develop")
+	if err := os.WriteFile(filepath.Join(repo, "only-on-develop.txt"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-qm", "develop only")
+	run("checkout", "-q", "main")
+
+	p := testProfile(t, repo)
+	p.Base = "develop"
+
+	wt, err := Ensure(p, "feature/from-develop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wt.Base != "develop" {
+		t.Errorf("Base = %q, want develop", wt.Base)
+	}
+	if _, err := os.Stat(filepath.Join(wt.Path, "only-on-develop.txt")); err != nil {
+		t.Errorf("branch was not started from the profile's base: %v", err)
+	}
+}
+
+func TestEnsureRejectsAnUnknownBase(t *testing.T) {
+	repo := newRepo(t)
+	p := testProfile(t, repo)
+	p.Base = "nonexistent"
+
+	// Silently falling back would start the branch somewhere the developer
+	// did not ask for.
+	if _, err := Ensure(p, "feature/x"); err == nil {
+		t.Fatal("expected an error for a base that does not exist")
+	}
+}
+
 func currentBranch(t *testing.T, dir string) string {
 	t.Helper()
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
