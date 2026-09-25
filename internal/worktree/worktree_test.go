@@ -12,9 +12,9 @@ import (
 func TestSlug(t *testing.T) {
 	cases := map[string]string{
 		"feature/ticket-1234": "feature-ticket-1234",
-		"Feature/TICKET_12":  "feature-ticket-12",
-		"main":             "main",
-		"///":              "branch",
+		"Feature/TICKET_12":   "feature-ticket-12",
+		"main":                "main",
+		"///":                 "branch",
 	}
 	for in, want := range cases {
 		if got := Slug(in); got != want {
