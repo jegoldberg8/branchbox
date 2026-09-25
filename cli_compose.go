@@ -51,7 +51,7 @@ func cmdCompose(ctx context.Context, args []string) error {
 		// profile's full set for a stack started with no services.
 		services = st.Services
 	}
-	cfg, err := procompose.Build(p, st.Worktree, services)
+	cfg, err := procompose.Build(p, st.Worktree, services, st.Ports)
 	if err != nil {
 		return err
 	}

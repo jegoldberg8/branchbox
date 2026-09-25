@@ -102,13 +102,23 @@ func TestBuildPublishesEveryAllocatedPortOnTheSameNumber(t *testing.T) {
 	if cfg.ContainerEnv["PORT"] != "3120" || cfg.ContainerEnv["METRICS_PORT"] != "6120" {
 		t.Errorf("ports not in env: %v", cfg.ContainerEnv)
 	}
-	want := map[string]bool{"127.0.0.1:3120:3120": true, "127.0.0.1:6120:6120": true}
-	if len(cfg.AppPort) != len(want) {
-		t.Fatalf("AppPort = %v", cfg.AppPort)
+	// The stack's whole slot is published, because services after the first
+	// are offset inside it and would otherwise be unreachable from the host.
+	for _, want := range []string{"127.0.0.1:3120:3120", "127.0.0.1:6120:6120"} {
+		found := false
+		for _, got := range cfg.AppPort {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s is not published: %v", want, cfg.AppPort)
+		}
 	}
-	for _, p := range cfg.AppPort {
-		if !want[p] {
-			t.Errorf("unexpected published port %q (host and container numbers must match)", p)
+	for _, got := range cfg.AppPort {
+		host, container, _ := strings.Cut(strings.TrimPrefix(got, "127.0.0.1:"), ":")
+		if host != container {
+			t.Errorf("published %q maps different numbers; a printed port must be the one that works", got)
 		}
 	}
 }

@@ -137,9 +137,18 @@ func Build(p *profile.Profile, o Options) (*Config, error) {
 	}
 	for name, port := range o.Alloc.Ports {
 		cfg.ContainerEnv[name] = strconv.Itoa(port)
-		// Publish on the same number inside and out, so a port printed by
-		// branchbox is the port that works from the host.
-		cfg.AppPort = append(cfg.AppPort, fmt.Sprintf("127.0.0.1:%d:%d", port, port))
+		// Publish the stack's whole slot, not just the first port: services
+		// after the first are offset inside the slot so they do not fight over
+		// one port, and a metrics endpoint you cannot reach from the host is
+		// not much use. Same number inside and out, so a port branchbox prints
+		// is the port that works.
+		span := 1
+		if spec, ok := p.Ports[name]; ok && spec.Stride > 1 {
+			span = spec.Stride
+		}
+		for i := 0; i < span; i++ {
+			cfg.AppPort = append(cfg.AppPort, fmt.Sprintf("127.0.0.1:%d:%d", port+i, port+i))
+		}
 	}
 	sort.Strings(cfg.AppPort)
 

@@ -3,6 +3,7 @@ package procompose
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,81 +11,52 @@ import (
 	"github.com/jegoldberg8/branchbox/internal/docker"
 )
 
-// listenersScript reports every listening TCP port in the container together
-// with the command lines of the owning process and its ancestors.
-//
-// It reads /proc directly rather than using ss or lsof, which are not in the
-// image: a service's port is worth showing without asking every project to
-// install extra tools. Sockets are matched to processes by inode, which is
-// what ss itself does.
-//
-// Ancestors are included because `go run ./kocmd apiserver` execs a binary in
-// the build cache, whose own command line is a content hash with no trace of
-// the service. The name only survives in the parent.
-const listenersScript = `
-for f in /proc/net/tcp /proc/net/tcp6; do
-  [ -r "$f" ] || continue
-  # State 0A is LISTEN. The local port is hex; convert in the shell because
-  # Debian's mawk has no strtonum.
-  awk 'NR>1 && $4=="0A" {split($2,a,":"); print a[2], $10}' "$f"
-done | sort -u | while read -r hexport inode; do
-  port=$((16#$hexport))
-  for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
-    if ls -l /proc/$pid/fd 2>/dev/null | grep -q "socket:\[$inode\]"; then
-      line=""; p=$pid; d=0
-      while [ -n "$p" ] && [ "$p" != "0" ] && [ "$d" -lt 6 ]; do
-        [ -r "/proc/$p/cmdline" ] || break
-        line="$line $(tr '\0' ' ' < /proc/$p/cmdline)"
-        # PPid from status, not field 4 of stat: a process name containing a
-        # space or parenthesis shifts stat's fields and the walk stops early.
-        p=$(awk '/^PPid:/ {print $2}' "/proc/$p/status" 2>/dev/null)
-        d=$((d+1))
-      done
-      printf '%s\t%s\n' "$port" "$line"
-      break
-    fi
-  done
-done
-`
+// portsPattern matches `process-compose process ports`' output, for example
+// "Process bgworker TCP ports: [6111]".
+var portsPattern = regexp.MustCompile(`\[([0-9,\s]*)\]`)
 
 // Listeners maps each of a stack's services to the ports it is listening on.
 //
 // The profile's declared ports say what a stack was *given*; this says what a
 // service actually bound, which is what you need when a request is refused.
+//
+// It asks process-compose rather than reading /proc, because the supervisor
+// already knows which PID belongs to which service. Inferring that from
+// process ancestry misattributes ports: `go run ./kocmd bgworker` execs a
+// binary in the build cache whose command line is a content hash, and matching
+// service names against the ancestry text claimed one service's port for
+// another.
 func Listeners(ctx context.Context, container string, services []string) (map[string][]int, error) {
-	out, err := docker.ExecLogin(ctx, container, listenersScript)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read listening ports: %w", err)
-	}
-	found := map[string]map[int]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		port, cmdline, ok := strings.Cut(strings.TrimSpace(line), "\t")
-		if !ok {
-			continue
-		}
-		n, err := strconv.Atoi(port)
+	out := map[string][]int{}
+	for _, name := range services {
+		res, err := docker.ExecLogin(ctx, container,
+			fmt.Sprintf("process-compose -p %d process ports %s 2>/dev/null", Port, name))
 		if err != nil {
+			// A service process-compose does not manage simply has no ports
+			// to report; that is not an error for the caller.
 			continue
 		}
-		// Attribute by the service name appearing in the command line, which
-		// is how `go run ./kocmd apiserver` and its built binary both resolve
-		// to "apiserver".
-		for _, name := range services {
-			if !strings.Contains(cmdline, name) {
+		m := portsPattern.FindStringSubmatch(res)
+		if m == nil {
+			continue
+		}
+		var ports []int
+		// Fields are space separated ("[3110 6110]"), but accept commas too so
+		// a formatting change upstream does not silently blank the list.
+		for _, field := range strings.FieldsFunc(m[1], func(r rune) bool {
+			return r == ',' || r == ' ' || r == '\t'
+		}) {
+			p, err := strconv.Atoi(field)
+			if err != nil {
 				continue
 			}
-			if found[name] == nil {
-				found[name] = map[int]bool{}
-			}
-			found[name][n] = true
+			ports = append(ports, p)
 		}
-	}
-	out2 := map[string][]int{}
-	for name, ports := range found {
-		for p := range ports {
-			out2[name] = append(out2[name], p)
+		if len(ports) == 0 {
+			continue
 		}
-		sort.Ints(out2[name])
+		sort.Ints(ports)
+		out[name] = ports
 	}
-	return out2, nil
+	return out, nil
 }

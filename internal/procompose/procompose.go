@@ -42,10 +42,13 @@ type Config struct {
 
 // Process is one service.
 type Process struct {
-	Command          string       `yaml:"command"`
-	WorkingDir       string       `yaml:"working_dir"`
-	Description      string       `yaml:"description,omitempty"`
-	LogLocation      string       `yaml:"log_location,omitempty"`
+	Command     string `yaml:"command"`
+	WorkingDir  string `yaml:"working_dir"`
+	Description string `yaml:"description,omitempty"`
+	LogLocation string `yaml:"log_location,omitempty"`
+	// Environment overrides for this process only, as NAME=value. Used to give
+	// each service its own port inside the stack's slot.
+	Environment      []string     `yaml:"environment,omitempty"`
 	Availability     Availability `yaml:"availability"`
 	ShutDownParams   ShutDown     `yaml:"shutdown"`
 	DisableAnsiColor bool         `yaml:"disable_ansi_colors,omitempty"`
@@ -67,7 +70,7 @@ type ShutDown struct {
 
 // Build renders the config for the named services, or for every service in the
 // profile when none are named.
-func Build(p *profile.Profile, workdir string, services []string) (*Config, error) {
+func Build(p *profile.Profile, workdir string, services []string, allocated map[string]int) (*Config, error) {
 	if len(services) == 0 {
 		services = p.ServiceNames()
 	}
@@ -75,12 +78,12 @@ func Build(p *profile.Profile, workdir string, services []string) (*Config, erro
 		return nil, fmt.Errorf("profile %s defines no services", p.Name)
 	}
 	cfg := &Config{Version: "0.5", IsStrict: true, Processes: map[string]Process{}}
-	for _, name := range services {
+	for i, name := range services {
 		command, ok := p.Services[name]
 		if !ok {
 			return nil, fmt.Errorf("profile %s has no service %q", p.Name, name)
 		}
-		cfg.Processes[name] = Process{
+		proc := Process{
 			Command:    command,
 			WorkingDir: workdir,
 			// The same path the tmux runner uses, so `branchbox logs` keeps
@@ -93,8 +96,37 @@ func Build(p *profile.Profile, workdir string, services []string) (*Config, erro
 			},
 			ShutDownParams: ShutDown{Signal: 15, Timeout: 10},
 		}
+		// Every service in a stack otherwise inherits the same METRICS_PORT
+		// and only the first to bind gets it; the rest log "address already
+		// in use" and run without metrics. Offsetting keeps them inside the
+		// stack's own slot, so two stacks still cannot collide.
+		if i > 0 {
+			proc.Environment = portOffsets(p, allocated, i)
+		}
+		cfg.Processes[name] = proc
 	}
 	return cfg, nil
+}
+
+// portOffsets shifts a service's port variables by n within the stack's own
+// slot, starting from the ports actually allocated to this stack rather than
+// the profile's base, which belongs to slot zero.
+func portOffsets(p *profile.Profile, allocated map[string]int, n int) []string {
+	var env []string
+	for name, spec := range p.Ports {
+		base, ok := allocated[name]
+		if !ok {
+			continue
+		}
+		if spec.Stride <= n {
+			// No room inside this stack's slot; leaving it alone is better
+			// than handing out a port another stack owns.
+			continue
+		}
+		env = append(env, fmt.Sprintf("%s=%d", name, base+n))
+	}
+	sort.Strings(env)
+	return env
 }
 
 // Write renders the config into the container, via a heredoc rather than a

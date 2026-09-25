@@ -33,7 +33,7 @@ worker = "go run ./cmd/worker"
 
 func TestBuildUsesTheProfileCommands(t *testing.T) {
 	p := testProfile(t)
-	cfg, err := Build(p, "/work", []string{"api"})
+	cfg, err := Build(p, "/work", []string{"api"}, map[string]int{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestBuildUsesTheProfileCommands(t *testing.T) {
 }
 
 func TestBuildDefaultsToEveryService(t *testing.T) {
-	cfg, err := Build(testProfile(t), "/work", nil)
+	cfg, err := Build(testProfile(t), "/work", nil, map[string]int{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestBuildDefaultsToEveryService(t *testing.T) {
 }
 
 func TestBuildRejectsAnUnknownService(t *testing.T) {
-	if _, err := Build(testProfile(t), "/work", []string{"nope"}); err == nil {
+	if _, err := Build(testProfile(t), "/work", []string{"nope"}, map[string]int{}); err == nil {
 		t.Fatal("expected an error for a service the profile does not define")
 	}
 }
@@ -84,7 +84,7 @@ func TestBuildRejectsAProfileWithNoServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Build(p, "/work", nil); err == nil {
+	if _, err := Build(p, "/work", nil, map[string]int{}); err == nil {
 		t.Fatal("expected an error when there is nothing to run")
 	}
 }
@@ -93,7 +93,7 @@ func TestBuildRejectsAProfileWithNoServices(t *testing.T) {
 // container through a heredoc: a quoting mistake would surface as a
 // process-compose parse error rather than a Go error.
 func TestConfigIsValidYAML(t *testing.T) {
-	cfg, err := Build(testProfile(t), "/work", nil)
+	cfg, err := Build(testProfile(t), "/work", nil, map[string]int{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,5 +158,72 @@ func TestStatusHealthyRequiresNoRestarts(t *testing.T) {
 		if got := c.st.Healthy(); got != c.want {
 			t.Errorf("%s: Healthy() = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// TestBuildGivesEachServiceItsOwnPorts covers a bug that cost real debugging
+// time: every service inherited the same METRICS_PORT, so only the first to
+// bind got it and the rest logged "address already in use" while appearing to
+// run normally.
+func TestBuildGivesEachServiceItsOwnPorts(t *testing.T) {
+	dir := t.TempDir()
+	body := `name = "proj"
+repo = "` + dir + `"
+[ports]
+METRICS_PORT = { base = 6100, stride = 10 }
+[services]
+api = "run api"
+worker = "run worker"
+`
+	path := filepath.Join(dir, "proj.toml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := profile.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// This stack was allocated slot 1, so its ports start at 6110.
+	cfg, err := Build(p, "/work", []string{"api", "worker"}, map[string]int{"METRICS_PORT": 6110})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first service keeps the stack's own port, so the documented number
+	// still means something.
+	if env := cfg.Processes["api"].Environment; len(env) != 0 {
+		t.Errorf("the first service should keep the stack's port, got %v", env)
+	}
+	worker := cfg.Processes["worker"].Environment
+	if len(worker) != 1 || worker[0] != "METRICS_PORT=6111" {
+		t.Errorf("worker env = %v, want METRICS_PORT=6111", worker)
+	}
+}
+
+func TestBuildDoesNotOffsetPastTheStackSlot(t *testing.T) {
+	dir := t.TempDir()
+	// A stride of 1 leaves no room: the next port belongs to another stack.
+	body := `name = "proj"
+repo = "` + dir + `"
+[ports]
+PORT = { base = 3100, stride = 1 }
+[services]
+a = "run a"
+b = "run b"
+`
+	path := filepath.Join(dir, "proj.toml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := profile.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Build(p, "/work", []string{"a", "b"}, map[string]int{"PORT": 3101})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env := cfg.Processes["b"].Environment; len(env) != 0 {
+		t.Errorf("env = %v, want no offset that would take another stack's port", env)
 	}
 }
