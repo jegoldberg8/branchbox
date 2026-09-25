@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/jegoldberg8/branchbox/internal/devcontainer"
 	"github.com/jegoldberg8/branchbox/internal/docker"
 	"github.com/jegoldberg8/branchbox/internal/infra"
+	"github.com/jegoldberg8/branchbox/internal/procompose"
 	"github.com/jegoldberg8/branchbox/internal/profile"
 	"github.com/jegoldberg8/branchbox/internal/run"
 	"github.com/jegoldberg8/branchbox/internal/tmux"
@@ -160,7 +162,23 @@ func cmdPS(ctx context.Context, args []string) error {
 			portList = append(portList, fmt.Sprintf("%s=%d", name, st.Ports[name]))
 		}
 		fmt.Printf("%-24s %-9s %s (%s)\n", st.Project+"/"+st.Slug, status, st.Branch, head)
-		fmt.Printf("    services: %s%s\n", strings.Join(services, ", "), runner)
+		// Per-service ports where they can be discovered, since "which port is
+		// the apiserver on" is the usual reason for reading this at all.
+		listening := map[string][]int{}
+		if status == "running" && len(services) > 0 {
+			if l, err := procompose.Listeners(ctx, st.ContainerName, services); err == nil {
+				listening = l
+			}
+		}
+		labelled := make([]string, 0, len(services))
+		for _, name := range services {
+			if ports := listening[name]; len(ports) > 0 {
+				labelled = append(labelled, name+" "+joinPorts(ports))
+				continue
+			}
+			labelled = append(labelled, name)
+		}
+		fmt.Printf("    services: %s%s\n", strings.Join(labelled, ", "), runner)
 		if len(dead) > 0 {
 			fmt.Printf("    FAILED:   %s (see `branchbox logs %s <service>`)\n",
 				strings.Join(dead, ", "), st.Slug)
@@ -171,6 +189,15 @@ func cmdPS(ctx context.Context, args []string) error {
 		fmt.Printf("    worktree: %s\n", st.Worktree)
 	}
 	return nil
+}
+
+// joinPorts renders a service's listening ports as :3110 or :3110,:6110.
+func joinPorts(ports []int) string {
+	out := make([]string, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, ":"+strconv.Itoa(p))
+	}
+	return strings.Join(out, ",")
 }
 
 // printInfra summarises the shared services a project's stacks depend on.
